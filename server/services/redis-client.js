@@ -1,8 +1,8 @@
 const Redis = require('ioredis')
 
-function createRedisClients({ redisUrl, keyPrefix }) {
+function createRedisClients({ redisUrl, keyPrefix = '' }) {
   const command = new Redis(redisUrl, { keyPrefix })
-  const subscriber = command.duplicate({ keyPrefix })
+  const subscriber = command.duplicate()
 
   return { command, subscriber }
 }
