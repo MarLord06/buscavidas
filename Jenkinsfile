@@ -45,7 +45,7 @@ pipeline {
 
     stage('E2E') {
       steps {
-        sh 'npm run test:e2e'
+        sh 'TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e'
       }
     }
 
