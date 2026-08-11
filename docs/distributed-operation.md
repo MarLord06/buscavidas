@@ -32,28 +32,44 @@ npm run start:cluster
 
 El comando inicia los siguientes nodos:
 
-| Nodo | URL pública | Rol esperado con los tres vivos |
+| Nodo | Puerto | Rol esperado con los tres vivos |
 | --- | --- | --- |
-| 1 | `http://localhost:3001` | seguidor |
-| 2 | `http://localhost:3002` | seguidor |
-| 3 | `http://localhost:3003` | líder |
+| 1 | `3001` | seguidor |
+| 2 | `3002` | seguidor |
+| 3 | `3003` | líder |
 
 La elección usa el identificador numérico vivo más alto. Cada nodo renueva un
-heartbeat y lease de seis segundos cada dos segundos. Un cliente que reciba
-`LEADER_REDIRECT` o `leader-changed` se vuelve a conectar a la URL pública del
-líder.
+heartbeat y lease de cuatro segundos cada 500 ms. Los nodos seleccionan una
+IPv4 local no loopback para su URL pública; `PUBLIC_URL` o `PUBLIC_HOST`
+permiten sobreescribirla. Un cliente que recibe `LEADER_REDIRECT` o
+`leader-changed` se conecta a la URL pública del líder. Si el nodo al que estaba
+conectado cae y ya no puede emitir ese evento, el cliente consulta
+`/cluster/leader` en los tres puertos, descubre al sucesor y vuelve a ingresar a
+la sala con su `clientId` persistente.
 
 En otra terminal sirve el cliente apuntando inicialmente al líder:
 
 ```bash
-VITE_SERVER_URL=http://localhost:3003 npm --prefix client run dev
+npm --prefix client run dev
 ```
 
-Abre la URL que informe Vite, normalmente `http://localhost:5173`. El enlace
+Abre la URL **Network** que informe Vite, por ejemplo
+`http://192.168.1.20:5173`. El enlace
 **Dashboard** abre `/dashboard` y muestra el líder, nodos, reloj Lamport,
 versiones de sala y eventos. Al crear una sala, comparte el código o el QR con
 los otros participantes; para una prueba manual usa tres perfiles de navegador
 distintos (normal, privado y otro perfil/navegador).
+
+Si la interfaz elegida automáticamente no es la correcta, inicia el clúster y
+el cliente con valores explícitos:
+
+```bash
+PUBLIC_HOST=192.168.1.20 npm run start:cluster
+VITE_PUBLIC_URL=http://192.168.1.20:5173 \
+VITE_SERVER_URL=http://192.168.1.20:3003 \
+VITE_CLUSTER_URLS=http://192.168.1.20:3001,http://192.168.1.20:3002,http://192.168.1.20:3003 \
+npm --prefix client run dev
+```
 
 ## Demostración de recuperación del líder
 
@@ -73,8 +89,9 @@ npm run start:node:3
 ```
 
 Con una partida en curso, detén el proceso de `start:node:3` con `Ctrl-C`.
-Espera al menos siete segundos (un lease puede tardar hasta seis segundos en
-expirar) y comprueba el lease compartido:
+El sucesor debe asumir en menos de seis segundos; la prueba automatizada de
+caída conserva intencionalmente el heartbeat y lease antiguos, como ocurriría
+si el proceso terminara sin limpieza. Comprueba el lease compartido:
 
 ```bash
 redis-cli GET buscaminas:cluster:leader
@@ -85,7 +102,6 @@ en Redis. La continuidad se puede comprobar conectando de nuevo al nodo 2 y
 realizando una acción válida:
 
 ```bash
-VITE_SERVER_URL=http://localhost:3002 npm --prefix client run dev
 redis-cli --scan --pattern 'buscaminas:room:*'
 ```
 

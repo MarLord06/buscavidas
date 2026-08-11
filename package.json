@@ -14,9 +14,9 @@
     "test:e2e": "start-server-and-test \"npm run start:test-app\" \"http://127.0.0.1:3001|http://127.0.0.1:5173\" \"cypress run\"",
     "test": "npm run test:server && npm run test:e2e",
     "redis:check": "redis-cli ping",
-    "start:node:1": "NODE_ID=1 PORT=3001 PUBLIC_URL=http://localhost:3001 npm --prefix server start",
-    "start:node:2": "NODE_ID=2 PORT=3002 PUBLIC_URL=http://localhost:3002 npm --prefix server start",
-    "start:node:3": "NODE_ID=3 PORT=3003 PUBLIC_URL=http://localhost:3003 npm --prefix server start",
+    "start:node:1": "NODE_ID=1 PORT=3001 npm --prefix server start",
+    "start:node:2": "NODE_ID=2 PORT=3002 npm --prefix server start",
+    "start:node:3": "NODE_ID=3 PORT=3003 npm --prefix server start",
     "start:cluster": "concurrently --kill-others-on-fail \"npm run start:node:1\" \"npm run start:node:2\" \"npm run start:node:3\""
   },
   "devDependencies": {

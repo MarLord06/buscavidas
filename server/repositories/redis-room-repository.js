@@ -20,6 +20,52 @@ end
 return 0
 `
 
+const SAVE_ROOM_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2])
+return 1
+`
+
+const SAVE_COMMAND_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])
+return 1
+`
+
+const SAVE_ROOM_AND_COMMAND_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2])
+redis.call('set', KEYS[3], ARGV[3], 'EX', ARGV[4])
+return 1
+`
+
+const CREATE_ROOM_AND_COMMAND_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return -1
+end
+if redis.call('exists', KEYS[2]) == 1 then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2])
+redis.call('set', KEYS[3], ARGV[3], 'EX', ARGV[4])
+return 1
+`
+
+const SAVE_PLAYER_HEARTBEAT_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2], 'PX', ARGV[3])
+redis.call('sadd', KEYS[3], ARGV[4])
+return 1
+`
+
 function createRedisRoomRepository({
   redis,
   keyPrefix = '',
@@ -54,6 +100,12 @@ function createRedisRoomRepository({
       token,
       LOCK_TTL_MILLISECONDS,
     )
+  }
+
+  function lockLostError() {
+    return Object.assign(new Error('Se perdió el lock de la sala'), {
+      code: 'LOCK_LOST',
+    })
   }
 
   async function getRoom(roomCode) {
@@ -93,8 +145,25 @@ function createRedisRoomRepository({
     return roomCodes.sort()
   }
 
-  async function saveRoom(room) {
-    await redis.set(roomKey(room.roomCode), JSON.stringify(room))
+  async function saveRoom(room, lock) {
+    if (!lock) {
+      await redis.set(roomKey(room.roomCode), JSON.stringify(room))
+      return
+    }
+
+    lock.throwIfLost()
+    const saved = await redis.eval(
+      SAVE_ROOM_WITH_LOCK,
+      2,
+      lock.key,
+      roomKey(room.roomCode),
+      lock.token,
+      JSON.stringify(room),
+    )
+
+    if (saved !== 1) {
+      throw lockLostError()
+    }
   }
 
   async function withRoomLock(roomCode, fn) {
@@ -112,12 +181,35 @@ function createRedisRoomRepository({
 
       if (acquired === 'OK') {
         let latestRenewal = Promise.resolve()
+        let renewalFailure = null
+        const lock = {
+          key,
+          token,
+          throwIfLost() {
+            if (renewalFailure) {
+              throw lockLostError()
+            }
+          },
+        }
         const renewalTimer = setInterval(() => {
-          latestRenewal = renewLock(key, token).catch(() => 0)
+          latestRenewal = latestRenewal.then(async () => {
+            try {
+              const renewed = await renewLock(key, token)
+
+              if (renewed !== 1) {
+                renewalFailure = lockLostError()
+              }
+            } catch (error) {
+              renewalFailure = error
+            }
+          })
         }, LOCK_RENEWAL_INTERVAL_MILLISECONDS)
 
         try {
-          return await fn()
+          const result = await fn(lock)
+          await latestRenewal
+          lock.throwIfLost()
+          return result
         } finally {
           clearInterval(renewalTimer)
           await latestRenewal
@@ -139,21 +231,66 @@ function createRedisRoomRepository({
     return serializedResult ? JSON.parse(serializedResult) : null
   }
 
-  async function saveCommand(roomCode, commandId, result) {
-    await redis.set(
+  async function saveCommand(roomCode, commandId, result, lock) {
+    if (!lock) {
+      await redis.set(
+        commandKey(roomCode, commandId),
+        JSON.stringify(result),
+        'EX',
+        COMMAND_TTL_SECONDS,
+      )
+      return
+    }
+
+    lock.throwIfLost()
+    const saved = await redis.eval(
+      SAVE_COMMAND_WITH_LOCK,
+      2,
+      lock.key,
       commandKey(roomCode, commandId),
+      lock.token,
       JSON.stringify(result),
-      'EX',
       COMMAND_TTL_SECONDS,
     )
+
+    if (saved !== 1) {
+      throw lockLostError()
+    }
   }
 
-  async function saveRoomAndCommand(room, commandId, result) {
+  async function saveRoomAndCommand(
+    room,
+    commandId,
+    result,
+    lock,
+    commandScope = room.roomCode,
+  ) {
+    if (lock) {
+      lock.throwIfLost()
+      const saved = await redis.eval(
+        SAVE_ROOM_AND_COMMAND_WITH_LOCK,
+        3,
+        lock.key,
+        roomKey(room.roomCode),
+        commandKey(commandScope, commandId),
+        lock.token,
+        JSON.stringify(room),
+        JSON.stringify(result),
+        COMMAND_TTL_SECONDS,
+      )
+
+      if (saved !== 1) {
+        throw lockLostError()
+      }
+
+      return
+    }
+
     const transactionResults = await redis
       .multi()
       .set(roomKey(room.roomCode), JSON.stringify(room))
       .set(
-        commandKey(room.roomCode, commandId),
+        commandKey(commandScope, commandId),
         JSON.stringify(result),
         'EX',
         COMMAND_TTL_SECONDS,
@@ -166,6 +303,59 @@ function createRedisRoomRepository({
     }
   }
 
+  async function createRoomAndCommand(
+    room,
+    commandId,
+    result,
+    lock,
+    commandScope = room.roomCode,
+  ) {
+    lock.throwIfLost()
+    const created = await redis.eval(
+      CREATE_ROOM_AND_COMMAND_WITH_LOCK,
+      3,
+      lock.key,
+      roomKey(room.roomCode),
+      commandKey(commandScope, commandId),
+      lock.token,
+      JSON.stringify(room),
+      JSON.stringify(result),
+      COMMAND_TTL_SECONDS,
+    )
+
+    if (created === -1) {
+      throw lockLostError()
+    }
+
+    return created === 1
+  }
+
+  async function savePlayerHeartbeat(
+    heartbeatKey,
+    roomsKey,
+    roomCode,
+    timestamp,
+    ttlMilliseconds,
+    lock,
+  ) {
+    lock.throwIfLost()
+    const saved = await redis.eval(
+      SAVE_PLAYER_HEARTBEAT_WITH_LOCK,
+      3,
+      lock.key,
+      heartbeatKey,
+      roomsKey,
+      lock.token,
+      timestamp,
+      ttlMilliseconds,
+      roomCode,
+    )
+
+    if (saved !== 1) {
+      throw lockLostError()
+    }
+  }
+
   return {
     getRoom,
     listRoomCodes,
@@ -174,6 +364,8 @@ function createRedisRoomRepository({
     getCommand,
     saveCommand,
     saveRoomAndCommand,
+    createRoomAndCommand,
+    savePlayerHeartbeat,
   }
 }
 

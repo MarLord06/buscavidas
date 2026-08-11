@@ -1,7 +1,7 @@
 const { EventEmitter } = require('node:events')
 
-const HEARTBEAT_TTL_MS = 6000
-const ELECTION_INTERVAL_MS = 2000
+const HEARTBEAT_TTL_MS = 4000
+const ELECTION_INTERVAL_MS = 500
 
 const ACQUIRE_OR_RENEW_LEADER = `
 local current = redis.call('get', KEYS[1])
@@ -200,7 +200,7 @@ function createClusterCoordinator({
     }, ELECTION_INTERVAL_MS)
   }
 
-  async function stop() {
+  async function stop({ graceful = true } = {}) {
     if (timer) {
       clearInterval(timer)
       timer = null
@@ -209,8 +209,11 @@ function createClusterCoordinator({
     started = false
     await tickQueue
     leader = false
-    await redis.del(heartbeatKey)
-    await redis.eval(RELEASE_LEADER, 1, leaderKey, nodeId, token)
+
+    if (graceful) {
+      await redis.del(heartbeatKey)
+      await redis.eval(RELEASE_LEADER, 1, leaderKey, nodeId, token)
+    }
   }
 
   return {

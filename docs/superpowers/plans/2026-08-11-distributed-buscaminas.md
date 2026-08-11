@@ -12,7 +12,7 @@
 
 - Redis local debe responder `PONG` en `REDIS_URL` antes de iniciar el clúster.
 - Los nodos usan IDs numéricos `1`, `2` y `3`; el ID vivo mayor es el líder esperado.
-- Los heartbeats y leases usan TTL de 6 s y se renuevan cada 2 s.
+- Los heartbeats y leases usan TTL de 4 s y se renuevan cada 500 ms.
 - Las acciones mutantes contienen `commandId`, `clientId` y `lamportClock`.
 - La consistencia es secuencial por sala, no una transacción global entre salas.
 - Nunca documentar tolerancia a caída de Redis ni Sentinel mientras solo exista una instancia Redis.
@@ -283,7 +283,7 @@ game for reconnection.
 
 Run: `node --test server/test/failover.test.js && npm run test:server`
 
-Expected: node 2 becomes leader in less than 6.5 seconds, and all server tests
+Expected: node 2 becomes leader in less than 6 seconds, and all server tests
 PASS.
 
 ```bash

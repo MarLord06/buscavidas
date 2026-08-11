@@ -155,6 +155,102 @@ test('un commandId repetido devuelve el resultado original sin cambiar puntaje',
   assert.equal((await repository.getRoom(roomCode)).players[0].score, 1)
 })
 
+test('un commandId repetido al crear devuelve la misma sala sin generar otra', async (t) => {
+  const { game, repository } = createGame(t)
+  const command = {
+    playerId: 'socket-old',
+    playerName: 'Ana',
+    commandId: 'same-create',
+    clientId: 'stable-client',
+    lamportClock: 2,
+  }
+
+  const original = await game.createRoom(command)
+  const retried = await game.createRoom({
+    ...command,
+    playerId: 'socket-new',
+  })
+
+  assert.deepEqual(retried, original)
+  assert.deepEqual(await repository.listRoomCodes(), [original.roomCode])
+})
+
+test('solo el mismo clientId puede recuperar un jugador desconectado', async (t) => {
+  const { game, repository } = createGame(t)
+  const created = await game.createRoom({
+    playerId: 'socket-old',
+    playerName: 'Ana',
+    commandId: 'identity-create',
+    clientId: 'stable-client',
+    lamportClock: 1,
+  })
+  const room = await repository.getRoom(created.roomCode)
+  room.status = 'playing'
+  await repository.saveRoom(room)
+  await game.leaveRoom({
+    roomCode: created.roomCode,
+    playerId: created.player.id,
+    commandId: 'identity-disconnect',
+    clientId: 'stable-client',
+    disconnected: true,
+  })
+
+  const impersonation = await game.joinRoom({
+    roomCode: created.roomCode,
+    playerId: 'attacker-socket',
+    playerName: 'Ana',
+    commandId: 'identity-attacker',
+    clientId: 'attacker-client',
+  })
+  const reconnected = await game.joinRoom({
+    roomCode: created.roomCode,
+    playerId: 'socket-new',
+    playerName: 'Ana',
+    commandId: 'identity-owner',
+    clientId: 'stable-client',
+  })
+
+  assert.equal(impersonation.success, false)
+  assert.equal(reconnected.success, true)
+  assert.equal(reconnected.reconnected, true)
+  assert.equal(reconnected.player.id, created.player.id)
+  assert.equal('clientId' in reconnected.player, false)
+  assert.equal(
+    'clientId' in (await game.getRoomState(created.roomCode)).players[0],
+    false,
+  )
+})
+
+test('una desconexión antigua no deshace una reconexión más reciente', async (t) => {
+  const { game, repository } = createGame(t)
+  const created = await game.createRoom({
+    playerName: 'Ana',
+    commandId: 'connection-create',
+    clientId: 'stable-client',
+    connectionId: 'old-socket',
+  })
+  const reconnected = await game.joinRoom({
+    roomCode: created.roomCode,
+    playerName: 'Ana',
+    commandId: 'connection-rejoin',
+    clientId: 'stable-client',
+    connectionId: 'new-socket',
+  })
+  await game.leaveRoom({
+    roomCode: created.roomCode,
+    playerId: created.player.id,
+    commandId: 'connection-old-disconnect',
+    clientId: 'stable-client',
+    connectionId: 'old-socket',
+    disconnected: true,
+  })
+
+  const room = await repository.getRoom(created.roomCode)
+  assert.equal(reconnected.success, true)
+  assert.equal(room.players[0].connected, true)
+  assert.equal(room.players[0].connectionId, 'new-socket')
+})
+
 test('genera un commandId cuando el servicio recibe un comando sin identificador', async (t) => {
   const { game, repository } = createGame(t)
   const roomCode = 'PLAY03'
@@ -312,7 +408,7 @@ test('preserva las reglas del lobby y versiona cada transición válida', async 
 
   const started = await game.startGame({
     roomCode: created.roomCode,
-    playerId: 'player-1',
+    playerId: created.player.id,
     commandId: 'start',
     clientId: 'one',
     lamportClock: 9,
@@ -329,14 +425,14 @@ test('preserva las reglas del lobby y versiona cada transición válida', async 
 
   const restarted = await game.restartGame({
     roomCode: created.roomCode,
-    playerId: 'player-1',
+    playerId: created.player.id,
     commandId: 'restart',
     clientId: 'one',
     lamportClock: 10,
   })
   const left = await game.leaveRoom({
     roomCode: created.roomCode,
-    playerId: 'player-2',
+    playerId: second.player.id,
     commandId: 'leave',
     clientId: 'two',
     lamportClock: 11,

@@ -4,6 +4,7 @@ const ROOM_CODE_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const PLAYER_COLORS = ['#8b5cf6', '#22c55e', '#ef4444']
 const PLAYER_HEARTBEAT_TTL_MILLISECONDS = 15_000
 const PLAYER_HEARTBEAT_ROOMS_KEY = 'player-heartbeat:rooms'
+const CREATE_COMMAND_SCOPE = '__create__'
 
 function createBoard(rows, columns, mines, now) {
   const totalCells = rows * columns
@@ -90,6 +91,15 @@ function getPublicGame(game) {
   }
 }
 
+function getPublicPlayer(player) {
+  const {
+    clientId: _clientId,
+    connectionId: _connectionId,
+    ...publicPlayer
+  } = player
+  return publicPlayer
+}
+
 function getPublicRoom(room) {
   if (!room || room.deleted) {
     return null
@@ -99,7 +109,7 @@ function getPublicRoom(room) {
     roomCode: room.roomCode,
     status: room.status,
     hostId: room.hostId,
-    players: room.players,
+    players: room.players.map(getPublicPlayer),
     game: getPublicGame(room.game),
     lamportClock: room.lamportClock,
     stateVersion: room.stateVersion,
@@ -167,7 +177,7 @@ function createGameCommandService({
       return redirect
     }
 
-    return repository.withRoomLock(command.roomCode, async () => {
+    return repository.withRoomLock(command.roomCode, async (lock) => {
       const duplicate = await repository.getCommand(
         command.roomCode,
         command.commandId,
@@ -204,6 +214,7 @@ function createGameCommandService({
           room,
           command.commandId,
           result,
+          lock,
         )
         await publishRoomUpdated(getPublicRoom(room), {
           roomCode: room.roomCode,
@@ -216,6 +227,7 @@ function createGameCommandService({
           command.roomCode,
           command.commandId,
           result,
+          lock,
         )
       }
 
@@ -250,53 +262,70 @@ function createGameCommandService({
       })
     }
 
-    let roomCode
+    return repository.withRoomLock(
+      `create:${command.commandId}`,
+      async (lock) => {
+        const duplicate = await repository.getCommand(
+          CREATE_COMMAND_SCOPE,
+          command.commandId,
+        )
 
-    do {
-      roomCode = generateRoomCode()
-    } while (await repository.getRoom(roomCode))
-
-    return runRoomCommand({ ...command, roomCode }, async (room) => {
-      if (room) {
-        return {
-          mutated: false,
-          result: {
-            success: false,
-            message: 'No se pudo crear la sala',
-          },
+        if (duplicate) {
+          return duplicate
         }
-      }
 
-      const player = {
-        id: command.playerId,
-        name: playerName,
-        score: 0,
-        ready: false,
-        connected: true,
-        color: PLAYER_COLORS[0],
-      }
-      const createdRoom = {
-        roomCode,
-        status: 'waiting',
-        hostId: command.playerId,
-        players: [player],
-        game: null,
-        createdAt: now(),
-        lamportClock: 0,
-        stateVersion: 0,
-      }
+        const clientId = command.clientId || command.playerId
+        let createdRoom
+        let result
+        let created = false
 
-      return {
-        room: createdRoom,
-        mutated: true,
-        result: {
-          success: true,
-          roomCode,
-          player,
-          hostId: createdRoom.hostId,
-        },
-      }
-    })
+        while (!created) {
+          const roomCode = generateRoomCode()
+          const player = {
+            id: randomUUID(),
+            clientId,
+            connectionId: command.connectionId,
+            name: playerName,
+            score: 0,
+            ready: false,
+            connected: true,
+            color: PLAYER_COLORS[0],
+          }
+          createdRoom = {
+            roomCode,
+            status: 'waiting',
+            hostId: player.id,
+            players: [player],
+            game: null,
+            createdAt: now(),
+            lamportClock: 0,
+            stateVersion: 0,
+          }
+          advanceRoom(createdRoom, command)
+          result = resultWithMetadata(command, createdRoom, {
+            success: true,
+            roomCode,
+            player: getPublicPlayer(player),
+            hostId: createdRoom.hostId,
+          })
+          created = await repository.createRoomAndCommand(
+            createdRoom,
+            command.commandId,
+            result,
+            lock,
+            CREATE_COMMAND_SCOPE,
+          )
+        }
+
+        await publishRoomUpdated(getPublicRoom(createdRoom), {
+          roomCode: createdRoom.roomCode,
+          stateVersion: createdRoom.stateVersion,
+          lamportClock: createdRoom.lamportClock,
+          deleted: false,
+        })
+        return result
+      },
+    )
   }
 
   async function joinRoom(command) {
@@ -322,52 +351,51 @@ function createGameCommandService({
         }
       }
 
+      const clientId = command.clientId || command.playerId
       const existingPlayer = room.players.find(
-        (player) => player.name.toLowerCase() === playerName.toLowerCase(),
+        (player) =>
+          player.clientId === clientId ||
+          (!player.clientId && player.id === clientId),
       )
 
       if (existingPlayer) {
-        if (existingPlayer.connected) {
-          return {
-            mutated: false,
-            result: {
-              success: false,
-              message: 'Ese nombre ya está siendo utilizado',
-            },
-          }
-        }
-
-        const previousPlayerId = existingPlayer.id
-        existingPlayer.id = command.playerId
+        const wasConnected = existingPlayer.connected
+        const previousConnectionId = existingPlayer.connectionId
+        existingPlayer.clientId = clientId
+        existingPlayer.connectionId = command.connectionId
         existingPlayer.connected = true
-
-        if (room.game) {
-          room.game.board.forEach((cell) => {
-            if (cell.revealedBy === previousPlayerId) {
-              cell.revealedBy = command.playerId
-            }
-          })
-          room.game.winnerIds = room.game.winnerIds.map((playerId) =>
-            playerId === previousPlayerId ? command.playerId : playerId,
-          )
-        }
 
         const currentHost = room.players.find(
           (player) => player.id === room.hostId,
         )
 
         if (!currentHost?.connected) {
-          room.hostId = command.playerId
+          room.hostId = existingPlayer.id
         }
 
         return {
-          mutated: true,
+          mutated:
+            !wasConnected || previousConnectionId !== command.connectionId,
           result: {
             success: true,
             roomCode: normalizedCommand.roomCode,
-            player: existingPlayer,
+            player: getPublicPlayer(existingPlayer),
             hostId: room.hostId,
             reconnected: true,
+          },
+        }
+      }
+
+      const playerWithName = room.players.find(
+        (player) => player.name.toLowerCase() === playerName.toLowerCase(),
+      )
+
+      if (playerWithName) {
+        return {
+          mutated: false,
+          result: {
+            success: false,
+            message: 'Ese nombre ya está siendo utilizado',
           },
         }
       }
@@ -396,7 +424,9 @@ function createGameCommandService({
       const usedColors = new Set(room.players.map((player) => player.color))
       const color = PLAYER_COLORS.find((item) => !usedColors.has(item))
       const player = {
-        id: command.playerId,
+        id: randomUUID(),
+        clientId,
+        connectionId: command.connectionId,
         name: playerName,
         score: 0,
         ready: false,
@@ -410,7 +440,7 @@ function createGameCommandService({
         result: {
           success: true,
           roomCode: normalizedCommand.roomCode,
-          player,
+          player: getPublicPlayer(player),
           hostId: room.hostId,
           reconnected: false,
         },
@@ -629,7 +659,15 @@ function createGameCommandService({
         return { mutated: false, result: { success: true } }
       }
 
-      if (command.disconnected && room.status !== 'waiting') {
+      if (
+        command.disconnected &&
+        command.connectionId &&
+        room.players[playerIndex].connectionId !== command.connectionId
+      ) {
+        return { mutated: false, result: { success: true } }
+      }
+
+      if (command.disconnected) {
         room.players[playerIndex].connected = false
       } else {
         room.players.splice(playerIndex, 1)
@@ -658,7 +696,7 @@ function createGameCommandService({
       return redirect
     }
 
-    return repository.withRoomLock(command.roomCode, async () => {
+    return repository.withRoomLock(command.roomCode, async (lock) => {
       const room = await repository.getRoom(command.roomCode)
       const player = room?.players.find(
         (currentPlayer) => currentPlayer.id === command.playerId,
@@ -668,21 +706,14 @@ function createGameCommandService({
         return resultWithMetadata(command, room, { success: false })
       }
 
-      const transactionResults = await redis
-        .multi()
-        .set(
-          playerHeartbeatKey(command.roomCode, command.playerId),
-          String(now()),
-          'PX',
-          PLAYER_HEARTBEAT_TTL_MILLISECONDS,
-        )
-        .sadd(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), command.roomCode)
-        .exec()
-      const failedCommand = transactionResults.find(([error]) => error)
-
-      if (failedCommand) {
-        throw failedCommand[0]
-      }
+      await repository.savePlayerHeartbeat(
+        playerHeartbeatKey(command.roomCode, command.playerId),
+        keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
+        command.roomCode,
+        String(now()),
+        PLAYER_HEARTBEAT_TTL_MILLISECONDS,
+        lock,
+      )
 
       return resultWithMetadata(command, room, { success: true })
     })
@@ -701,7 +732,7 @@ function createGameCommandService({
       return redirect
     }
 
-    return repository.withRoomLock(roomCode, async () => {
+    return repository.withRoomLock(roomCode, async (lock) => {
       const room = await repository.getRoom(roomCode)
 
       if (!room || room.deleted || !redis) {
@@ -762,7 +793,7 @@ function createGameCommandService({
       }
 
       advanceRoom(room, command)
-      await repository.saveRoom(room)
+      await repository.saveRoom(room, lock)
       await publishRoomUpdated(getPublicRoom(room), {
         roomCode: room.roomCode,
         stateVersion: room.stateVersion,

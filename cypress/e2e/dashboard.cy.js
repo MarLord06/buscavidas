@@ -122,4 +122,42 @@ describe('cliente distribuido', () => {
         expect(state.url).to.equal('http://127.0.0.1:65534')
       })
   })
+
+  it('descubre al líder y recupera la sesión cuando cae la conexión actual', () => {
+    let discoveryRequests = 0
+    cy.intercept('GET', '**/cluster/leader', (request) => {
+      discoveryRequests += 1
+      request.reply({
+        body: {
+          leader: discoveryRequests === 1
+            ? {
+                nodeId: 3,
+                publicUrl: 'http://127.0.0.1:65534',
+              }
+            : {
+                nodeId: 2,
+                publicUrl: 'http://127.0.0.1:3001',
+              },
+        },
+      })
+    }).as('leaderDiscovery')
+    cy.visit('/')
+    cy.get('[data-testid="player-name-input"]').type('Ana')
+    cy.get('[data-testid="create-room-button"]').click()
+    cy.get('[data-testid="room-code"]').should('be.visible')
+
+    cy.window().then((win) => {
+      win.__testSocket.forceTransportClose()
+    })
+
+    cy.wait('@leaderDiscovery')
+    cy.window()
+      .its('__testSocket')
+      .invoke('sessionState')
+      .should((state) => {
+        expect(state.connected).to.equal(true)
+        expect(state.rejoinCount).to.equal(1)
+        expect(state.roomCode).to.match(/^[A-Z0-9]{6}$/)
+      })
+  })
 })

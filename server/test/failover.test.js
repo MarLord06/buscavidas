@@ -96,6 +96,14 @@ async function startNodes(nodeIds, { keyPrefix }) {
         await coordinator.stop()
         await redis.quit()
       },
+      crash: async () => {
+        if (closed) return
+        closed = true
+        for (const client of clients) client.close()
+        await server.close()
+        await coordinator.stop({ graceful: false })
+        await redis.quit()
+      },
     })
   }
 
@@ -118,14 +126,17 @@ async function createPlayableRoom(node) {
   const third = await node.connect()
   const created = await emitWithAck(host, 'create-room', {
     playerName: 'Ana',
+    clientId: 'client-ana',
   })
   await emitWithAck(second, 'join-room', {
     roomCode: created.roomCode,
     playerName: 'Beto',
+    clientId: 'client-beto',
   })
   await emitWithAck(third, 'join-room', {
     roomCode: created.roomCode,
     playerName: 'Caro',
+    clientId: 'client-caro',
   })
   await emitWithAck(host, 'start-game', {})
 
@@ -199,6 +210,7 @@ test('un nodo superviviente toma el liderazgo, lo publica y conserva la sala', a
   const reconnected = await emitWithAck(reconnectedHost, 'join-room', {
     roomCode,
     playerName: 'Ana',
+    clientId: 'client-ana',
   })
   const reveal = await emitWithAck(reconnectedHost, 'reveal-cell', {
     cellIndex: 0,
@@ -217,4 +229,30 @@ test('un nodo superviviente toma el liderazgo, lo publica y conserva la sala', a
   assert.equal(reconnected.success, true)
   assert.equal(reveal.success, true)
   assert.ok(advancedRoom.stateVersion > room.stateVersion)
+})
+
+test('una caída no limpia el lease y el sucesor asume en menos de seis segundos', async (t) => {
+  const keyPrefix = `buscaminas:test:crash-failover:${Date.now()}:${process.pid}:`
+  const cluster = await startNodes([1, 2, 3], { keyPrefix })
+  t.after(() => cluster.stopAll())
+  const startedAt = Date.now()
+
+  await cluster.node(3).crash()
+
+  assert.equal(
+    await cluster.node(2).redis.exists('cluster:heartbeat:3'),
+    1,
+  )
+  assert.equal((await cluster.node(2).coordinator.getLeader()).nodeId, 3)
+  await waitFor(
+    async () =>
+      (await cluster.node(2).coordinator.getLeader())?.nodeId === 2 &&
+      cluster.node(2).coordinator.isLeader(),
+    5900,
+  )
+
+  assert.ok(
+    Date.now() - startedAt < 6000,
+    `Failover tardó ${Date.now() - startedAt} ms`,
+  )
 })

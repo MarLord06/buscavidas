@@ -52,11 +52,11 @@ Redis y sus actualizaciones se emiten a través del adaptador.
 
 ## Liderazgo y detección de fallos
 
-Cada nodo escribe `cluster:heartbeat:<nodeId>` con TTL de seis segundos y lo
-renueva cada dos segundos. Cada ciclo de elección lee los heartbeats vigentes;
+Cada nodo escribe `cluster:heartbeat:<nodeId>` con TTL de cuatro segundos y lo
+renueva cada 500 ms. Cada ciclo de elección lee los heartbeats vigentes;
 el conjunto de nodos vivos se ordena por identificador y el mayor es el líder
 esperado. Solo ese nodo puede crear o renovar `cluster:leader` con un lease de
-seis segundos.
+cuatro segundos.
 
 El valor del lease incluye `nodeId` y un token aleatorio. Su renovación y
 liberación se hacen con scripts Lua que verifican el token, para que un nodo

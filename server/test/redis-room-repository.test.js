@@ -178,6 +178,113 @@ test('no libera un lock que ya pertenece a otro token', async (t) => {
   assert.equal(await redis.get('lock:room:LOCK01'), 'new-owner')
 })
 
+test('rechaza el commit si la transición perdió la propiedad del lock', async (t) => {
+  const { redis, repository } = createRepository(t)
+  const originalRoom = {
+    roomCode: 'LOCK01',
+    stateVersion: 1,
+    players: [{ id: 'player-1', score: 0 }],
+  }
+  await repository.saveRoom(originalRoom)
+
+  await assert.rejects(
+    repository.withRoomLock('LOCK01', async (lock) => {
+      await redis.set('lock:room:LOCK01', 'new-owner', 'PX', 3000)
+      await repository.saveRoomAndCommand(
+        {
+          ...originalRoom,
+          stateVersion: 2,
+          players: [{ id: 'player-1', score: 1 }],
+        },
+        'stale-command',
+        { success: true, stateVersion: 2 },
+        lock,
+      )
+    }),
+    (error) => error.code === 'LOCK_LOST',
+  )
+
+  assert.deepEqual(await repository.getRoom('LOCK01'), originalRoom)
+  assert.equal(
+    await repository.getCommand('LOCK01', 'stale-command'),
+    null,
+  )
+})
+
+test('rechaza el commit cuando falla la renovación del lock', async (t) => {
+  const keyPrefix = `buscaminas:test:renewal-error:${Date.now()}:${process.pid}:`
+  const redis = new Redis({ host: '127.0.0.1', port: 6379, keyPrefix })
+  const redisWithFailedRenewal = new Proxy(redis, {
+    get(target, property) {
+      if (property === 'eval') {
+        return async (script, ...argumentsList) => {
+          if (script.includes("redis.call('pexpire'")) {
+            throw new Error('renewal failed')
+          }
+
+          return target.eval(script, ...argumentsList)
+        }
+      }
+
+      const value = target[property]
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const repository = createRedisRoomRepository({
+    redis: redisWithFailedRenewal,
+  })
+  const originalRoom = {
+    roomCode: 'LOCK01',
+    stateVersion: 1,
+    players: [],
+  }
+  t.after(async () => {
+    const keys = await redis.keys('*')
+    if (keys.length > 0) {
+      await redis.del(...keys.map((key) => key.slice(keyPrefix.length)))
+    }
+    await redis.quit()
+  })
+  await repository.saveRoom(originalRoom)
+
+  await assert.rejects(
+    repository.withRoomLock('LOCK01', async (lock) => {
+      await delay(1100)
+      await repository.saveRoomAndCommand(
+        { ...originalRoom, stateVersion: 2 },
+        'renewal-error-command',
+        { success: true },
+        lock,
+      )
+    }),
+    (error) => error.code === 'LOCK_LOST',
+  )
+
+  assert.deepEqual(await repository.getRoom('LOCK01'), originalRoom)
+})
+
+test('no guarda heartbeat si el lock cambió de propietario', async (t) => {
+  const { redis, repository } = createRepository(t)
+
+  await assert.rejects(
+    repository.withRoomLock('LOCK01', async (lock) => {
+      await redis.set('lock:room:LOCK01', 'new-owner', 'PX', 3000)
+      await repository.savePlayerHeartbeat(
+        'player:LOCK01:player-1',
+        'player-heartbeat:rooms',
+        'LOCK01',
+        '1000',
+        15_000,
+        lock,
+      )
+    }),
+    (error) => error.code === 'LOCK_LOST',
+  )
+
+  assert.equal(await redis.exists('player:LOCK01:player-1'), 0)
+  assert.equal(await redis.sismember('player-heartbeat:rooms', 'LOCK01'), 0)
+})
+
 test('recupera el resultado de un commandId ya procesado', async (t) => {
   const { repository } = createRepository(t)
 
@@ -218,4 +325,28 @@ test('guarda la sala y el resultado del comando en una sola transacción', async
     await repository.getCommand('LOCK01', 'cmd-atomic'),
     result,
   )
+})
+
+test('no sobreescribe una sala existente al confirmar una creación', async (t) => {
+  const { repository } = createRepository(t)
+  const existingRoom = {
+    roomCode: 'LOCK01',
+    stateVersion: 7,
+    players: [{ id: 'existing-player' }],
+  }
+  await repository.saveRoom(existingRoom)
+
+  const created = await repository.withRoomLock(
+    'create:create-collision',
+    (lock) => repository.createRoomAndCommand(
+      { roomCode: 'LOCK01', stateVersion: 1, players: [] },
+      'create-collision',
+      { success: true, roomCode: 'LOCK01' },
+      lock,
+      '__create__',
+    ),
+  )
+
+  assert.equal(created, false)
+  assert.deepEqual(await repository.getRoom('LOCK01'), existingRoom)
 })

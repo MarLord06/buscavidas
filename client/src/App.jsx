@@ -5,6 +5,9 @@ import { emitCommand, socket } from './socket'
 import './App.css'
 
 function GameApp() {
+  const publicClientUrl = (
+    import.meta.env.VITE_PUBLIC_URL || window.location.origin
+  ).replace(/\/$/, '')
   const [playerName, setPlayerName] = useState('')
   const [roomInput, setRoomInput] = useState(() => {
     const roomCode = new URLSearchParams(window.location.search).get('room')
@@ -543,15 +546,20 @@ function returnToMenu() {
           </p>
 
           <div className="room-share">
-            <QRCodeSVG
-              data-testid="room-qr"
-              value={`${window.location.origin}/?room=${encodeURIComponent(room.roomCode)}`}
-              size={148}
-              bgColor="#ffffff"
-              fgColor="#160f25"
-              level="M"
-              title={`Abrir sala ${room.roomCode}`}
-            />
+            <a
+              data-testid="room-share-link"
+              href={`${publicClientUrl}/?room=${encodeURIComponent(room.roomCode)}`}
+            >
+              <QRCodeSVG
+                data-testid="room-qr"
+                value={`${publicClientUrl}/?room=${encodeURIComponent(room.roomCode)}`}
+                size={148}
+                bgColor="#ffffff"
+                fgColor="#160f25"
+                level="M"
+                title={`Abrir sala ${room.roomCode}`}
+              />
+            </a>
             <span>Escanea para abrir la sala {room.roomCode}</span>
           </div>
 

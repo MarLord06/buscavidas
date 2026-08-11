@@ -97,11 +97,25 @@ npm run start:cluster
 ```
 
 Los nodos se exponen en los puertos `3001`, `3002` y `3003`; con los tres
-activos, el nodo 3 es el líder esperado. Inicia el cliente contra el líder:
+activos, el nodo 3 es el líder esperado. El servidor detecta una IPv4 local no
+loopback para `PUBLIC_URL`; también puedes fijarla de forma explícita:
 
 ```bash
-VITE_SERVER_URL=http://localhost:3003 npm --prefix client run dev
+PUBLIC_HOST=192.168.1.20 npm run start:cluster
 ```
+
+Inicia el cliente. Vite escucha en la red local y el cliente deriva las URLs de
+los tres nodos desde el hostname con el que abriste la página:
+
+```bash
+npm --prefix client run dev
+```
+
+Abre la URL **Network** que imprime Vite (por ejemplo,
+`http://192.168.1.20:5173`) para que el QR y los redirects sean utilizables
+desde otro dispositivo. `VITE_PUBLIC_URL`, `VITE_SERVER_URL` y
+`VITE_CLUSTER_URLS` permiten sobreescribir esas URLs cuando la topología lo
+requiere.
 
 La guía de recuperación del líder, la demostración con tres clientes y los
 límites de esta configuración están en

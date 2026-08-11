@@ -5,7 +5,7 @@ const { createRedisClients } = require('./services/redis-client')
 
 async function startServer() {
   const config = loadConfig()
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
+  const clientUrl = process.env.CLIENT_URL || '*'
   const { command, subscriber } = createRedisClients(config)
   const coordinator = createClusterCoordinator({
     redis: command,

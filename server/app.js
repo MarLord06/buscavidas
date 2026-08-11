@@ -23,7 +23,7 @@ const CLUSTER_TELEMETRY_INTERVAL_MILLISECONDS = 2000
 function createGameServer(options = {}) {
   const config = options.config || {}
   const clientUrl =
-    config.clientUrl || options.clientUrl || 'http://localhost:5173'
+    config.clientUrl || options.clientUrl || '*'
   const app = express()
   const httpServer = http.createServer(app)
   const io = new Server(httpServer, {
@@ -205,6 +205,13 @@ function createGameServer(options = {}) {
       success: true,
       message: 'Servidor del Buscaminas Tripartito funcionando',
     })
+  })
+  app.get('/cluster/leader', async (request, response, next) => {
+    try {
+      response.json({ leader: await coordinator.getLeader() })
+    } catch (error) {
+      next(error)
+    }
   })
 
   io.adapter(createAdapter(publisher, subscriber))

@@ -36,20 +36,25 @@ function attachSocketHandlers({ io, game }) {
     console.log(`Cliente conectado: ${socket.id}`)
 
     socket.on('create-room', async (data = {}, callback) => {
+      const commandMetadata = metadata(socket, data)
+      const playerId = commandMetadata.clientId
       const result = await game.createRoom({
         ...data,
-        ...metadata(socket, data),
-        playerId: socket.id,
+        ...commandMetadata,
+        playerId,
+        connectionId: socket.id,
       })
 
       if (result.success) {
+        const stablePlayerId = result.player.id
         await socket.join(result.roomCode)
         socket.data.roomCode = result.roomCode
-        socket.data.playerId = socket.id
+        socket.data.playerId = stablePlayerId
+        socket.data.clientId = playerId
         socket.data.role = 'player'
         await game.heartbeatPlayer({
           roomCode: result.roomCode,
-          playerId: socket.id,
+          playerId: stablePlayerId,
         })
         console.log(`${result.player.name} creó la sala ${result.roomCode}`)
       }
@@ -62,20 +67,25 @@ function attachSocketHandlers({ io, game }) {
     })
 
     socket.on('join-room', async (data = {}, callback) => {
+      const commandMetadata = metadata(socket, data)
+      const playerId = commandMetadata.clientId
       const result = await game.joinRoom({
         ...data,
-        ...metadata(socket, data),
-        playerId: socket.id,
+        ...commandMetadata,
+        playerId,
+        connectionId: socket.id,
       })
 
       if (result.success) {
+        const stablePlayerId = result.player.id
         await socket.join(result.roomCode)
         socket.data.roomCode = result.roomCode
-        socket.data.playerId = socket.id
+        socket.data.playerId = stablePlayerId
+        socket.data.clientId = playerId
         socket.data.role = 'player'
         await game.heartbeatPlayer({
           roomCode: result.roomCode,
-          playerId: socket.id,
+          playerId: stablePlayerId,
         })
         console.log(
           `${result.player.name} ${
@@ -98,7 +108,7 @@ function attachSocketHandlers({ io, game }) {
         ...normalized.data,
         ...metadata(socket, normalized.data),
         roomCode,
-        playerId: socket.id,
+        playerId: socket.data.playerId || socket.id,
       })
 
       normalized.callback?.(result)
@@ -128,7 +138,7 @@ function attachSocketHandlers({ io, game }) {
         ...normalized.data,
         ...metadata(socket, normalized.data),
         roomCode,
-        playerId: socket.id,
+        playerId: socket.data.playerId || socket.id,
       })
 
       normalized.callback?.(result)
@@ -146,7 +156,7 @@ function attachSocketHandlers({ io, game }) {
         ...normalized.data,
         ...metadata(socket, normalized.data),
         roomCode,
-        playerId: socket.id,
+        playerId: socket.data.playerId || socket.id,
       })
 
       if (result.success) {
@@ -207,9 +217,10 @@ function attachSocketHandlers({ io, game }) {
       const roomCode = socket.data.roomCode
       const pendingDisconnect = game.leaveRoom({
         roomCode,
-        playerId: socket.id,
-        commandId: `disconnect:${socket.id}:${Date.now()}`,
-        clientId: socket.id,
+        playerId: socket.data.playerId,
+        commandId: `disconnect:${socket.data.playerId}:${Date.now()}`,
+        clientId: socket.data.clientId || socket.data.playerId,
+        connectionId: socket.id,
         lamportClock: 0,
         disconnected: true,
       }).catch((error) => {

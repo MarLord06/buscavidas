@@ -137,6 +137,76 @@ test('crea una sala, admite tres jugadores e inicia una partida', async (t) => {
   assert.equal(spectatorReveal.message, 'El jugador no está conectado');
 });
 
+test('reconecta la misma identidad por clientId y rechaza suplantación por nombre', async (t) => {
+  const gameServer = createGameServer({ clientUrl: '*' });
+  const port = await gameServer.listen(0);
+  const url = `http://127.0.0.1:${port}`;
+  const original = await connect(url);
+  const attacker = await connect(url);
+  const successor = await connect(url);
+  t.after(async () => {
+    original.close();
+    attacker.close();
+    successor.close();
+    await gameServer.close();
+  });
+
+  const created = await emitWithAck(original, 'create-room', {
+    playerName: 'Ana',
+    clientId: 'stable-browser',
+    commandId: 'stable-create',
+  });
+  const room = await gameServer.repository.getRoom(created.roomCode);
+  room.status = 'playing';
+  await gameServer.repository.saveRoom(room);
+  original.close();
+  await gameServer.game.reconcileExpiredPlayers(created.roomCode);
+
+  const impersonation = await emitWithAck(attacker, 'join-room', {
+    roomCode: created.roomCode,
+    playerName: 'Ana',
+    clientId: 'different-browser',
+    commandId: 'impersonation',
+  });
+  const reconnected = await emitWithAck(successor, 'join-room', {
+    roomCode: created.roomCode,
+    playerName: 'Ana',
+    clientId: 'stable-browser',
+    commandId: 'stable-rejoin',
+  });
+
+  assert.notEqual(created.player.id, 'stable-browser');
+  assert.equal('clientId' in created.player, false);
+  assert.equal(impersonation.success, false);
+  assert.equal(reconnected.success, true);
+  assert.equal(reconnected.player.id, created.player.id);
+});
+
+test('expone el líder actual para que un cliente aislado descubra al sucesor', async (t) => {
+  const leader = {
+    nodeId: 2,
+    publicUrl: 'http://192.168.1.20:3002',
+    expiresAt: Date.now() + 4000,
+  };
+  const gameServer = createGameServer({
+    clientUrl: '*',
+    coordinator: {
+      isLeader: () => false,
+      getLeader: async () => leader,
+      getNodes: async () => [],
+    },
+  });
+  const port = await gameServer.listen(0);
+  t.after(async () => gameServer.close());
+
+  const response = await fetch(
+    `http://127.0.0.1:${port}/cluster/leader`,
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { leader });
+});
+
 test('difunde el mismo estado de sala entre dos nodos', async (t) => {
   const keyPrefix = `buscaminas:test:game-server:${Date.now()}:${process.pid}:`;
   const firstRedis = new Redis({

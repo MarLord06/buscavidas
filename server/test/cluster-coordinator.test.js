@@ -64,11 +64,11 @@ test('elige el nodo vivo de ID mayor y reemplaza al líder expirado', async (t) 
   assert.deepEqual(await first.getLeader(), {
     nodeId: 3,
     publicUrl: 'http://node-3',
-    expiresAt: clock.now() + 6000,
+    expiresAt: clock.now() + 4000,
   })
 
   await third.stop()
-  await clock.advance(6001)
+  await clock.advance(4001)
   await first.tick()
 
   assert.equal(first.isLeader(), true)

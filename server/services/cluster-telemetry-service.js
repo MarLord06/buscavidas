@@ -1,5 +1,5 @@
 const RECENT_EVENT_LIMIT = 20
-const CLUSTER_HEARTBEAT_TTL_MILLISECONDS = 6000
+const CLUSTER_HEARTBEAT_TTL_MILLISECONDS = 4000
 
 function createClusterTelemetryService({
   coordinator,
