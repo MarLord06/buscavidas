@@ -210,7 +210,9 @@ export function recoverConnection() {
     while (Date.now() < deadline) {
       try {
         const leader = await discoverLeader(deadline)
-        return await connectToLeader(leader)
+        const recoveredSocket = await connectToLeader(leader)
+        retryPendingCommands()
+        return recoveredSocket
       } catch (error) {
         lastError = error
         await wait(250)
@@ -223,6 +225,15 @@ export function recoverConnection() {
       recoveryAttempt = null
     })
   return recoveryAttempt
+}
+
+function retryPendingCommands() {
+  pendingCommands.forEach((command) => {
+    if (!command.retried && !command.completed) {
+      command.retried = true
+      sendCommand(command)
+    }
+  })
 }
 
 function completeCommand(command, response) {
@@ -304,12 +315,7 @@ export function emitCommand(eventName, payload = {}, callback) {
 socket.on('leader-changed', (leader) => {
   connectToLeader(leader)
     .then(() => {
-      pendingCommands.forEach((command) => {
-        if (!command.retried && !command.completed) {
-          command.retried = true
-          sendCommand(command)
-        }
-      })
+      retryPendingCommands()
     })
     .catch(() => {})
 })
