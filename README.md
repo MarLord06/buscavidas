@@ -47,7 +47,7 @@ El proyecto utiliza un cliente web desarrollado con React y un servidor Node.js 
 
 Antes de ejecutar el proyecto debes tener instalado:
 
-- [Node.js](https://nodejs.org/) 18 o una versión posterior.
+- [Node.js](https://nodejs.org/) 18 o una versión posterior para ejecutar la aplicación. El análisis con SonarScanner requiere Node.js 22.12 o posterior.
 - npm, incluido con Node.js.
 - Un navegador web moderno.
 
@@ -130,10 +130,11 @@ calidad:
 ```bash
 read -s SONAR_TOKEN
 export SONAR_TOKEN
+export SONAR_HOST_URL=http://localhost:9000
 npm install
 npm run quality:lint
 npm run quality:build
-npm run sonar:scan -- -Dsonar.host.url=http://localhost:9000 -Dsonar.token="$SONAR_TOKEN"
+npm run sonar:scan
 ```
 
 No guardes el token en archivos versionados ni lo compartas. El análisis se

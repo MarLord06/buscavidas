@@ -1,11 +1,11 @@
 # Evidencia de SonarQube
 
 - [ ] Captura de `http://localhost:9000` con el proyecto Buscaminas Tripartito.
-- [x] Primer análisis completado con `EXECUTION SUCCESS`.
+- [ ] Captura del resultado `EXECUTION SUCCESS` del primer análisis.
 - [ ] Captura del Quality Gate y de las métricas de bugs, vulnerabilidades y code smells.
-- [x] Evidencia de que `npm run quality:lint` y `npm run quality:build` finalizaron correctamente.
-- [x] Evidencia de que `npm audit` finalizó sin vulnerabilidades.
-- [x] Confirmación de que no hay tokens en el repositorio; solo se referencia la variable `SONAR_TOKEN`.
+- [ ] Evidencia de que `npm run quality:lint` y `npm run quality:build` finalizaron correctamente.
+- [ ] Evidencia de que `npm audit` finalizó sin vulnerabilidades.
+- [ ] Confirmación de que no hay tokens en el repositorio; solo se referencia la variable `SONAR_TOKEN`.
 
 ## Estado de instalación
 

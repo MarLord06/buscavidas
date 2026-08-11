@@ -220,7 +220,8 @@ Run:
 ```zsh
 npm run quality:lint
 npm run quality:build
-npm run sonar:scan -- -Dsonar.host.url=http://localhost:9000 -Dsonar.token="$SONAR_TOKEN"
+export SONAR_HOST_URL=http://localhost:9000
+npm run sonar:scan
 ```
 
 Expected: lint and build complete successfully, then the scanner ends with `EXECUTION SUCCESS` and links to the `buscaminas-tripartito` dashboard. A failed quality gate is evidence to address in a later code-quality task, not a reason to expose the token or disable rules.
