@@ -496,7 +496,9 @@ function returnToMenu() {
 
           <p className="room-label">Código de la sala</p>
 
-          <h1 className="room-code">{room.roomCode}</h1>
+          <h1 className="room-code" data-testid="room-code">
+            {room.roomCode}
+          </h1>
 
           <p>Jugadores conectados: {connectedPlayers}/3</p>
             {isSpectator && (
@@ -587,6 +589,7 @@ function returnToMenu() {
         <p>Partida competitiva para tres jugadores</p>
 
         <input
+          data-testid="player-name-input"
           type="text"
           placeholder="Escribe tu nombre"
           maxLength="15"
@@ -597,6 +600,7 @@ function returnToMenu() {
         />
 
         <button
+          data-testid="create-room-button"
           className="create-button"
           type="button"
           onClick={createRoom}

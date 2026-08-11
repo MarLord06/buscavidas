@@ -5,9 +5,22 @@
   "scripts": {
     "quality:lint": "npm --prefix client run lint",
     "quality:build": "npm --prefix client run build",
-    "sonar:scan": "sonar-scanner-npm"
+    "sonar:scan": "sonar-scanner-npm",
+    "test:server": "npm --prefix server test",
+    "test:coverage": "npm --prefix server run test:coverage",
+    "start:test-server": "PORT=3001 CLIENT_URL=http://127.0.0.1:5173 npm --prefix server start",
+    "start:test-client": "VITE_SERVER_URL=http://127.0.0.1:3001 npm --prefix client run dev -- --host 127.0.0.1 --port 5173 --strictPort",
+    "start:test-app": "concurrently --kill-others-on-fail \"npm run start:test-server\" \"npm run start:test-client\"",
+    "test:e2e": "start-server-and-test \"npm run start:test-app\" \"http://127.0.0.1:3001|http://127.0.0.1:5173\" \"cypress run\"",
+    "test": "npm run test:server && npm run test:e2e"
   },
   "devDependencies": {
-    "@sonar/scan": "^5.0.0"
+    "@sonar/scan": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "cypress": "^15.20.1",
+    "start-server-and-test": "^2.1.2"
+  },
+  "allowScripts": {
+    "cypress@15.20.1": true
   }
 }

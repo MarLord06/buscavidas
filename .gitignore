@@ -4,6 +4,9 @@ server/node_modules/
 dist/
 build/
 coverage/
+server/coverage/
+cypress/screenshots/
+cypress/videos/
 .env
 .env.*
 !.env.example

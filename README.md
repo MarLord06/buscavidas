@@ -134,11 +134,28 @@ export SONAR_HOST_URL=http://localhost:9000
 npm install
 npm run quality:lint
 npm run quality:build
+npm run test:coverage
 npm run sonar:scan
 ```
 
 No guardes el token en archivos versionados ni lo compartas. El análisis se
 verá en `http://localhost:9000/dashboard?id=buscaminas-tripartito`.
+
+## Pruebas automatizadas
+
+Desde la carpeta raíz, instala las dependencias de prueba y ejecuta todas las
+capas con:
+
+```bash
+npm install
+npm --prefix server install
+npm test
+```
+
+`npm run test:server` ejecuta las pruebas de integración de Socket.IO con
+`node:test`. `npm run test:e2e` inicia un servidor temporal en el puerto 3001,
+Vite en el 5173 y ejecuta Cypress en modo headless. Para generar el reporte de
+cobertura LCOV que SonarQube importa, usa `npm run test:coverage`.
 
 ## Cómo jugar
 
@@ -169,8 +186,11 @@ buscaminas-tripartito/
 │   ├── package.json
 │   └── vite.config.js
 ├── server/
+│   ├── app.js
 │   ├── package.json
 │   └── server.js
+├── cypress/
+│   └── e2e/
 └── .gitignore
 ```
 

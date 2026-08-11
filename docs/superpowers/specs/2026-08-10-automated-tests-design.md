@@ -43,7 +43,7 @@ un espectador no puede revelar casillas y los estados se propagan a los clientes
   entorno existentes o sus valores locales.
 - `server/test/*.test.js`: casos `node:test` que crean salas y clientes aislados.
 - `cypress/e2e/*.cy.js`: pruebas end-to-end de interfaz.
-- `cypress.config.js`: orden de arranque de Vite/servidor y base URL de Cypress.
+- `cypress.config.mjs`: orden de arranque de Vite/servidor y base URL de Cypress.
 - `package.json`: scripts raíz de orquestación; las dependencias de prueba son de
   desarrollo y no se empaquetan en producción.
 
