@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react'
-import { socket } from './socket'
+import { QRCodeSVG } from 'qrcode.react'
+import Dashboard from './Dashboard'
+import { emitCommand, socket } from './socket'
 import './App.css'
 
-function App() {
+function GameApp() {
   const [playerName, setPlayerName] = useState('')
-  const [roomInput, setRoomInput] = useState('')
+  const [roomInput, setRoomInput] = useState(() => {
+    const roomCode = new URLSearchParams(window.location.search).get('room')
+    return roomCode?.trim().toUpperCase() || ''
+  })
   const [room, setRoom] = useState(null)
+  const [lastStateVersion, setLastStateVersion] = useState(0)
   const [currentPlayerId, setCurrentPlayerId] = useState('')
   const [error, setError] = useState('')
   const [isSpectator, setIsSpectator] = useState(false)
@@ -17,7 +23,15 @@ function App() {
 
   useEffect(() => {
     function handleRoomUpdated(updatedRoom) {
-      setRoom(updatedRoom)
+      const incomingVersion = Number(updatedRoom?.stateVersion) || 0
+
+      setLastStateVersion((currentVersion) =>
+        Math.max(currentVersion, incomingVersion),
+      )
+      setRoom((currentRoom) => {
+        const currentVersion = Number(currentRoom?.stateVersion) || 0
+        return incomingVersion >= currentVersion ? updatedRoom : currentRoom
+      })
     }
 
     function handleConnectionError() {
@@ -44,6 +58,19 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!room?.roomCode || isSpectator) {
+      return undefined
+    }
+
+    const heartbeat = () => {
+      emitCommand('player-heartbeat', {})
+    }
+    const heartbeatTimer = window.setInterval(heartbeat, 5000)
+
+    return () => window.clearInterval(heartbeatTimer)
+  }, [room?.roomCode, isSpectator])
+
   function createRoom() {
     if (!playerName.trim()) {
       setError('Debes escribir tu nombre')
@@ -53,7 +80,7 @@ function App() {
     setError('')
     setLoading(true)
 
-    socket.emit(
+    emitCommand(
       'create-room',
       {
         playerName: playerName.trim(),
@@ -68,13 +95,17 @@ function App() {
 
         setCurrentPlayerId(response.player.id)
         setIsSpectator(false)
-        setRoom({
+        const createdRoom = {
           roomCode: response.roomCode,
           status: 'waiting',
           hostId: response.hostId,
           players: [response.player],
           game: null,
-        })
+          lamportClock: response.lamportClock,
+          stateVersion: response.stateVersion,
+        }
+        setRoom(createdRoom)
+        setLastStateVersion(Number(response.stateVersion) || 0)
       },
     )
   }
@@ -93,7 +124,7 @@ function App() {
     setError('')
     setLoading(true)
 
-    socket.emit(
+    emitCommand(
       'join-room',
       {
         playerName: playerName.trim(),
@@ -109,13 +140,17 @@ function App() {
 
         setCurrentPlayerId(response.player.id)
         setIsSpectator(false)
-        setRoom({
+        const joinedRoom = {
           roomCode: response.roomCode,
           status: 'waiting',
           hostId: response.hostId,
           players: [response.player],
           game: null,
-        })
+          lamportClock: response.lamportClock,
+          stateVersion: response.stateVersion,
+        }
+        setRoom(joinedRoom)
+        setLastStateVersion(Number(response.stateVersion) || 0)
       },
     )
   }
@@ -157,7 +192,7 @@ function joinAsSpectator() {
     setError('')
     setLoading(true)
 
-    socket.emit('start-game', (response) => {
+    emitCommand('start-game', {}, (response) => {
       setLoading(false)
 
       if (!response?.success) {
@@ -173,7 +208,7 @@ function restartGame() {
   setError('')
   setGameMessage('Preparando una nueva partida...')
 
-  socket.emit('restart-game', (response) => {
+  emitCommand('restart-game', {}, (response) => {
     setLoading(false)
 
     if (!response?.success) {
@@ -192,7 +227,7 @@ function returnToMenu() {
   setLoading(true)
   setError('')
 
-  socket.emit('leave-room', (response) => {
+  emitCommand('leave-room', {}, (response) => {
     setLoading(false)
 
     if (!response?.success) {
@@ -205,6 +240,7 @@ function returnToMenu() {
     }
 
     setRoom(null)
+    setLastStateVersion(0)
     setCurrentPlayerId('')
     setIsSpectator(false)
     setRoomInput('')
@@ -224,7 +260,7 @@ function returnToMenu() {
     setPendingCell(cellIndex)
     setGameMessage('Revelando casilla...')
 
-    socket.emit(
+    emitCommand(
       'reveal-cell',
       {
         cellIndex,
@@ -302,6 +338,7 @@ function returnToMenu() {
 
               <p className="game-room">
                 Sala: {room.roomCode}
+                {' · '}Versión {lastStateVersion}
               </p>
               {isSpectator && (
                 <div className="spectator-badge">
@@ -500,6 +537,32 @@ function returnToMenu() {
             {room.roomCode}
           </h1>
 
+          <p className="room-version-label">
+            Versión{' '}
+            <span data-testid="room-version">{lastStateVersion}</span>
+          </p>
+
+          <div className="room-share">
+            <QRCodeSVG
+              data-testid="room-qr"
+              value={`${window.location.origin}/?room=${encodeURIComponent(room.roomCode)}`}
+              size={148}
+              bgColor="#ffffff"
+              fgColor="#160f25"
+              level="M"
+              title={`Abrir sala ${room.roomCode}`}
+            />
+            <span>Escanea para abrir la sala {room.roomCode}</span>
+          </div>
+
+          <a
+            className="dashboard-link"
+            data-testid="dashboard-link"
+            href="/dashboard"
+          >
+            Ver dashboard del clúster
+          </a>
+
           <p>Jugadores conectados: {connectedPlayers}/3</p>
             {isSpectator && (
               <div className="spectator-badge">
@@ -588,6 +651,14 @@ function returnToMenu() {
 
         <p>Partida competitiva para tres jugadores</p>
 
+        <a
+          className="dashboard-link dashboard-link-home"
+          data-testid="dashboard-link"
+          href="/dashboard"
+        >
+          Ver dashboard del clúster
+        </a>
+
         <input
           data-testid="player-name-input"
           type="text"
@@ -655,6 +726,14 @@ function returnToMenu() {
       </section>
     </main>
   )
+}
+
+function App() {
+  if (window.location.pathname === '/dashboard') {
+    return <Dashboard />
+  }
+
+  return <GameApp />
 }
 
 export default App

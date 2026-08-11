@@ -44,6 +44,26 @@ function nextRoomUpdate(client, predicate) {
   });
 }
 
+function nextEvent(client, eventName, predicate = () => true, timeout = 4000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.off(eventName, handleEvent);
+      reject(new Error(`Timeout esperando ${eventName}`));
+    }, timeout);
+    const handleEvent = (payload) => {
+      if (!predicate(payload)) {
+        return;
+      }
+
+      clearTimeout(timer);
+      client.off(eventName, handleEvent);
+      resolve(payload);
+    };
+
+    client.on(eventName, handleEvent);
+  });
+}
+
 test('expone un servidor iniciable en un puerto efímero', async (t) => {
   const gameServer = createGameServer({ clientUrl: '*' });
   t.after(async () => gameServer.close());
@@ -242,6 +262,119 @@ test('difunde el mismo estado de sala entre dos nodos', async (t) => {
   assert.equal(started.success, true);
   assert.equal(followerRoom.stateVersion, leaderRoom.stateVersion);
   assert.deepEqual(followerRoom.game.cells, leaderRoom.game.cells);
+});
+
+test('publica telemetría real del líder, nodos, salas y eventos', async (t) => {
+  const keyPrefix = `buscaminas:test:telemetry:${Date.now()}:${process.pid}:`;
+  const firstRedis = new Redis({ host: '127.0.0.1', port: 6379, keyPrefix });
+  const thirdRedis = new Redis({ host: '127.0.0.1', port: 6379, keyPrefix });
+  const firstCoordinator = createClusterCoordinator({
+    redis: firstRedis,
+    nodeId: 1,
+    publicUrl: 'http://node-1',
+  });
+  const thirdCoordinator = createClusterCoordinator({
+    redis: thirdRedis,
+    nodeId: 3,
+    publicUrl: 'http://node-3',
+  });
+
+  await firstCoordinator.start();
+  await thirdCoordinator.start();
+
+  const gameServer = createGameServer({
+    config: {
+      clientUrl: '*',
+      nodeId: 3,
+      clusterNodeIds: [1, 2, 3],
+    },
+    redis: thirdRedis,
+    coordinator: thirdCoordinator,
+  });
+  const port = await gameServer.listen(0);
+  const url = `http://127.0.0.1:${port}`;
+  const host = createClient(url, {
+    autoConnect: false,
+    forceNew: true,
+    transports: ['websocket'],
+  });
+  const initialStatusPromise = nextEvent(host, 'cluster-status');
+  const connected = new Promise((resolve, reject) => {
+    host.once('connect', resolve);
+    host.once('connect_error', reject);
+  });
+  host.connect();
+  await connected;
+
+  t.after(async () => {
+    host.close();
+    await gameServer.close();
+    await Promise.all([firstCoordinator.stop(), thirdCoordinator.stop()]);
+    const keys = await firstRedis.keys('*');
+
+    if (keys.length > 0) {
+      await firstRedis.del(...keys.map((key) => key.slice(keyPrefix.length)));
+    }
+
+    await Promise.all([firstRedis.quit(), thirdRedis.quit()]);
+  });
+
+  const initialStatus = await initialStatusPromise;
+  assert.equal(initialStatus.leader.nodeId, 3);
+  assert.deepEqual(
+    initialStatus.nodes.map((node) => [node.nodeId, node.alive]),
+    [[1, true], [2, false], [3, true]],
+  );
+  assert.ok(initialStatus.leader.leaseRemainingMs > 0);
+
+  const roomStatusPromise = nextEvent(
+    host,
+    'cluster-status',
+    (status) => status.rooms.length === 1 && status.events.length > 0,
+  );
+  const created = await emitWithAck(host, 'create-room', {
+    playerName: 'Ana',
+    commandId: 'telemetry-create',
+    clientId: 'telemetry-client',
+    lamportClock: 7,
+  });
+  const roomStatus = await roomStatusPromise;
+  const room = roomStatus.rooms[0];
+
+  assert.equal(created.success, true);
+  assert.equal(room.roomCode, created.roomCode);
+  assert.equal(room.stateVersion, created.stateVersion);
+  assert.equal(roomStatus.lamportClock, created.lamportClock);
+  assert.equal(room.players.length, 1);
+  assert.ok(
+    roomStatus.events.some(
+      (event) =>
+        event.type === 'command-applied' &&
+        event.roomCode === created.roomCode &&
+        event.stateVersion === created.stateVersion,
+      ),
+  );
+
+  const deletedStatusPromise = nextEvent(
+    host,
+    'cluster-status',
+    (status) =>
+      status.rooms.length === 0 &&
+      status.events.some(
+        (event) =>
+          event.type === 'room-deleted' &&
+          event.roomCode === created.roomCode,
+      ),
+  );
+  const left = await emitWithAck(host, 'leave-room', {
+    commandId: 'telemetry-leave',
+    clientId: 'telemetry-client',
+    lamportClock: 9,
+  });
+  const deletedStatus = await deletedStatusPromise;
+
+  assert.equal(left.success, true);
+  assert.equal(deletedStatus.rooms.length, 0);
 });
 
 test('renueva por quince segundos el heartbeat del jugador conectado', async (t) => {

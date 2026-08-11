@@ -569,6 +569,57 @@ body {
   text-shadow: 0 0 20px rgba(167, 139, 250, 0.35);
 }
 
+.home .lobby .room-version-label {
+  margin-bottom: 16px;
+  color: #c4b5fd;
+}
+
+.home .room-share {
+  display: grid;
+  width: fit-content;
+  gap: 9px;
+  margin: 0 auto 16px;
+  place-items: center;
+  padding: 13px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(167, 139, 250, 0.26);
+  border-radius: 15px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.home .room-share svg {
+  display: block;
+  padding: 8px;
+  background: #ffffff;
+  border-radius: 9px;
+}
+
+.home .dashboard-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  padding: 9px 13px;
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.home .dashboard-link:hover {
+  color: #f5f3ff;
+  background: rgba(124, 58, 237, 0.15);
+  border-color: rgba(167, 139, 250, 0.65);
+}
+
+.home .dashboard-link-home {
+  margin: -9px auto 18px;
+}
+
 .home .lobby > p:not(.room-label) {
   width: fit-content;
   margin: 0 auto 15px;

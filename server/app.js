@@ -12,9 +12,13 @@ const {
   createGameCommandService,
 } = require('./services/game-command-service')
 const { attachSocketHandlers } = require('./services/socket-handlers')
+const {
+  createClusterTelemetryService,
+} = require('./services/cluster-telemetry-service')
 
 let standaloneServerCount = 0
 const PLAYER_RECONCILIATION_INTERVAL_MILLISECONDS = 5000
+const CLUSTER_TELEMETRY_INTERVAL_MILLISECONDS = 2000
 
 function createGameServer(options = {}) {
   const config = options.config || {}
@@ -63,17 +67,87 @@ function createGameServer(options = {}) {
     redis: publisher,
     keyPrefix: config.keyPrefix,
   })
+  let telemetry = null
+  let publishClusterStatus = () => Promise.resolve(null)
   const game = createGameCommandService({
     repository,
     coordinator,
     redis: publisher,
     keyPrefix: config.keyPrefix,
-    publishRoomUpdated: async (room) => {
-      io.to(room.roomCode).emit('room-updated', room)
+    publishRoomUpdated: async (room, change = {}) => {
+      if (room) {
+        io.to(room.roomCode).emit('room-updated', room)
+      }
+
+      if (telemetry) {
+        const eventType = change.deleted ? 'room-deleted' : 'command-applied'
+        await recordTelemetryEvent(eventType, {
+          message: change.deleted
+            ? `Sala ${change.roomCode} eliminada`
+            : `Sala ${change.roomCode} avanzó a v${change.stateVersion}`,
+          roomCode: change.roomCode,
+          stateVersion: change.stateVersion,
+          lamportClock: change.lamportClock,
+        }).catch(() => {})
+        publishClusterStatus(io).catch(() => {})
+      }
     },
+  })
+  telemetry = createClusterTelemetryService({
+    coordinator,
+    repository,
+    game,
+    redis: publisher,
+    keyPrefix: config.keyPrefix,
+    clusterNodeIds: config.clusterNodeIds || [1, 2, 3],
   })
   let reconciliationTimer = null
   let reconciliationQueue = Promise.resolve()
+  let telemetryTimer = null
+  let telemetryQueue = Promise.resolve()
+  let closing = false
+
+  function enqueueTelemetry(operation) {
+    const queuedOperation = telemetryQueue.then(operation)
+    telemetryQueue = queuedOperation.catch((error) => {
+      console.error('Falló una operación de telemetría', error)
+    })
+    return queuedOperation
+  }
+
+  function recordTelemetryEvent(type, details) {
+    if (closing) {
+      return Promise.resolve(null)
+    }
+
+    return enqueueTelemetry(() => telemetry.recordEvent(type, details))
+  }
+
+  publishClusterStatus = (target = io.local) => {
+    if (closing) {
+      return Promise.resolve(null)
+    }
+
+    return enqueueTelemetry(async () => {
+      const status = await telemetry.getStatus()
+      target.emit('cluster-status', status)
+      return status
+    })
+  }
+
+  function scheduleTelemetry() {
+    publishClusterStatus().catch(() => {})
+    telemetryTimer = setInterval(() => {
+      publishClusterStatus().catch(() => {})
+    }, CLUSTER_TELEMETRY_INTERVAL_MILLISECONDS)
+  }
+
+  function stopTelemetry() {
+    if (telemetryTimer) {
+      clearInterval(telemetryTimer)
+      telemetryTimer = null
+    }
+  }
 
   function reconcileRooms() {
     if (!coordinator.isLeader()) {
@@ -108,6 +182,14 @@ function createGameServer(options = {}) {
 
   function handleLeaderChanged(leader) {
     io.emit('leader-changed', leader)
+    recordTelemetryEvent('leader-changed', {
+      message: leader
+        ? `Nodo ${leader.nodeId} elegido líder`
+        : 'El clúster no tiene líder',
+      nodeId: leader?.nodeId ?? null,
+    }).then(() => publishClusterStatus(io)).catch((error) => {
+      console.error('No se pudo registrar el cambio de líder', error)
+    })
 
     if (coordinator.isLeader()) {
       scheduleReconciliation()
@@ -126,12 +208,16 @@ function createGameServer(options = {}) {
   })
 
   io.adapter(createAdapter(publisher, subscriber))
+  io.on('connection', (socket) => {
+    publishClusterStatus(socket).catch(() => {})
+  })
   const socketHandlers = attachSocketHandlers({ io, game })
   coordinator.on?.('leader-changed', handleLeaderChanged)
 
   if (coordinator.isLeader()) {
     scheduleReconciliation()
   }
+  scheduleTelemetry()
 
   function listen(port = 0) {
     return new Promise((resolve, reject) => {
@@ -145,8 +231,11 @@ function createGameServer(options = {}) {
   }
 
   async function close() {
+    closing = true
     stopReconciliation()
+    stopTelemetry()
     coordinator.off?.('leader-changed', handleLeaderChanged)
+    await telemetryQueue
     await new Promise((resolve, reject) => {
       io.close((error) => {
         if (error) {
@@ -179,6 +268,7 @@ function createGameServer(options = {}) {
     io,
     repository,
     game,
+    telemetry,
     listen,
     close,
   }

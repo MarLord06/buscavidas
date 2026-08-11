@@ -205,7 +205,12 @@ function createGameCommandService({
           command.commandId,
           result,
         )
-        await publishRoomUpdated(getPublicRoom(room))
+        await publishRoomUpdated(getPublicRoom(room), {
+          roomCode: room.roomCode,
+          stateVersion: room.stateVersion,
+          lamportClock: room.lamportClock,
+          deleted: Boolean(room.deleted),
+        })
       } else {
         await repository.saveCommand(
           command.roomCode,
@@ -758,7 +763,12 @@ function createGameCommandService({
 
       advanceRoom(room, command)
       await repository.saveRoom(room)
-      await publishRoomUpdated(getPublicRoom(room))
+      await publishRoomUpdated(getPublicRoom(room), {
+        roomCode: room.roomCode,
+        stateVersion: room.stateVersion,
+        lamportClock: room.lamportClock,
+        deleted: Boolean(room.deleted),
+      })
 
       if (!room.players.some((player) => player.connected)) {
         await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)

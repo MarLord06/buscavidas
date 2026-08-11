@@ -62,6 +62,37 @@ function createRedisRoomRepository({
     return serializedRoom ? JSON.parse(serializedRoom) : null
   }
 
+  async function listRoomCodes() {
+    const physicalPrefix = redis.options?.keyPrefix || keyPrefix
+    const roomKeyPattern = `${physicalPrefix}room:*`
+    const roomCodes = []
+    let cursor = '0'
+
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        'MATCH',
+        roomKeyPattern,
+        'COUNT',
+        100,
+      )
+      cursor = nextCursor
+
+      keys.forEach((key) => {
+        const logicalKey = physicalPrefix
+          ? key.slice(physicalPrefix.length)
+          : key
+        const match = /^room:([^:]+)$/.exec(logicalKey)
+
+        if (match) {
+          roomCodes.push(match[1])
+        }
+      })
+    } while (cursor !== '0')
+
+    return roomCodes.sort()
+  }
+
   async function saveRoom(room) {
     await redis.set(roomKey(room.roomCode), JSON.stringify(room))
   }
@@ -137,6 +168,7 @@ function createRedisRoomRepository({
 
   return {
     getRoom,
+    listRoomCodes,
     saveRoom,
     withRoomLock,
     getCommand,

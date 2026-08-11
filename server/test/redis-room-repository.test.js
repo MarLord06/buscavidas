@@ -23,6 +23,7 @@ function createRepository(t) {
   t.after(async () => {
     await redis.del(
       'room:ROOM01',
+      'room:ROOM02',
       'room:LOCK01',
       'room:LOCK01:command:cmd-1',
       'room:LOCK01:command:cmd-ttl',
@@ -59,6 +60,15 @@ test('guarda y recupera una sala serializada en Redis', async (t) => {
   await repository.saveRoom(room)
 
   assert.deepEqual(await repository.getRoom('ROOM01'), room)
+})
+
+test('lista solo códigos de sala y excluye claves de comandos', async (t) => {
+  const { repository } = createRepository(t)
+  await repository.saveRoom({ roomCode: 'ROOM02', players: [] })
+  await repository.saveRoom({ roomCode: 'ROOM01', players: [] })
+  await repository.saveCommand('ROOM01', 'cmd-1', { success: true })
+
+  assert.deepEqual(await repository.listRoomCodes(), ['ROOM01', 'ROOM02'])
 })
 
 test('aplica keyPrefix si el cliente Redis no tiene uno configurado', async (t) => {
