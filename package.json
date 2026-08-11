@@ -7,7 +7,7 @@
     "quality:build": "npm --prefix client run build",
     "sonar:scan": "sonar-scanner-npm",
     "test:server": "npm --prefix server test",
-    "test:coverage": "npm --prefix server run test:coverage",
+    "test:coverage": "node server/node_modules/c8/bin/c8.js --reporter=text --reporter=lcov --reports-dir=server/coverage node --test server/test/**/*.test.js",
     "start:test-server": "PORT=3001 CLIENT_URL=http://127.0.0.1:5173 npm --prefix server start",
     "start:test-client": "VITE_SERVER_URL=http://127.0.0.1:3001 npm --prefix client run dev -- --host 127.0.0.1 --port 5173 --strictPort",
     "start:test-app": "concurrently --kill-others-on-fail \"npm run start:test-server\" \"npm run start:test-client\"",

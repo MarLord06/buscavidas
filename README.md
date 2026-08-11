@@ -47,7 +47,7 @@ El proyecto utiliza un cliente web desarrollado con React y un servidor Node.js 
 
 Antes de ejecutar el proyecto debes tener instalado:
 
-- [Node.js](https://nodejs.org/) 18 o una versión posterior para ejecutar la aplicación. El análisis con SonarScanner requiere Node.js 22.12 o posterior.
+- [Node.js](https://nodejs.org/) 22.12 o una versión posterior para ejecutar la aplicación, las pruebas Cypress y el análisis con SonarScanner.
 - npm, incluido con Node.js.
 - Un navegador web moderno.
 
