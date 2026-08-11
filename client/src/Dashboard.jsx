@@ -167,8 +167,7 @@ function Dashboard() {
                   <small>{room.players?.length || 0} jugadores</small>
                 </div>
                 <span>
-                  v
-                  <b data-testid="room-version">
+                  {'v'}<b data-testid="room-version">
                     {room.stateVersion ?? 0}
                   </b>
                 </span>

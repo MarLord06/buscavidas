@@ -171,7 +171,7 @@ function createRedisRoomRepository({
       })
     } while (cursor !== '0')
 
-    return roomCodes.sort()
+    return roomCodes.sort((first, second) => first.localeCompare(second))
   }
 
   async function saveRoom(room, lock) {

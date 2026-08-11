@@ -4,7 +4,7 @@ function resolvePublicHost(interfaces = networkInterfaces()) {
   const addresses = Object.values(interfaces).flatMap((entries) => entries || [])
   const lanAddress = addresses.find(
     (address) =>
-      (address.family === 'IPv4' || address.family === 4) &&
+      address.family === 'IPv4' &&
       !address.internal,
   )
 

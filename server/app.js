@@ -68,7 +68,6 @@ function createGameServer(options = {}) {
     keyPrefix: config.keyPrefix,
   })
   let telemetry = null
-  let publishClusterStatus = () => Promise.resolve(null)
   const game = createGameCommandService({
     repository,
     coordinator,
@@ -123,7 +122,7 @@ function createGameServer(options = {}) {
     return enqueueTelemetry(() => telemetry.recordEvent(type, details))
   }
 
-  publishClusterStatus = (target = io.local) => {
+  function publishClusterStatus(target = io.local) {
     if (closing) {
       return Promise.resolve(null)
     }

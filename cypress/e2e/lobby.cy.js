@@ -21,7 +21,13 @@ describe('sala de espera', () => {
     cy.get('[data-testid="room-qr"]').should('be.visible')
     cy.get('[data-testid="room-share-link"]')
       .should('have.attr', 'href')
-      .and('match', /^http:\/\/127\.0\.0\.1:5173\/\?room=[A-Z0-9]{6}$/)
+      .then((href) => {
+        expect(href).to.equal(
+          `${Cypress.config('baseUrl')}/?room=${
+            Cypress.$('[data-testid="room-code"]').text()
+          }`,
+        )
+      })
     cy.get('[data-testid="dashboard-link"]')
       .should('be.visible')
       .and('have.attr', 'href', '/dashboard')

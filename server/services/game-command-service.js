@@ -1,4 +1,4 @@
-const { randomUUID } = require('node:crypto')
+const { randomInt, randomUUID } = require('node:crypto')
 
 const ROOM_CODE_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const PLAYER_COLORS = ['#8b5cf6', '#22c55e', '#ef4444']
@@ -11,7 +11,7 @@ function createBoard(rows, columns, mines, now) {
   const minePositions = new Set()
 
   while (minePositions.size < mines) {
-    minePositions.add(Math.floor(Math.random() * totalCells))
+    minePositions.add(randomInt(totalCells))
   }
 
   const board = Array.from({ length: totalCells }, (_, index) => {
@@ -288,7 +288,7 @@ function createGameCommandService({
     let code = ''
 
     for (let index = 0; index < 6; index += 1) {
-      const position = Math.floor(Math.random() * ROOM_CODE_CHARACTERS.length)
+      const position = randomInt(ROOM_CODE_CHARACTERS.length)
       code += ROOM_CODE_CHARACTERS[position]
     }
 

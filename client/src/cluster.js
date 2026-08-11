@@ -8,7 +8,15 @@ function createId() {
     return globalThis.crypto.randomUUID()
   }
 
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  if (globalThis.crypto?.getRandomValues) {
+    const values = globalThis.crypto.getRandomValues(new Uint32Array(4))
+    return Array.from(
+      values,
+      (value) => value.toString(16).padStart(8, '0'),
+    ).join('-')
+  }
+
+  throw new Error('El navegador no ofrece una API criptográfica segura')
 }
 
 function notifyClockSubscribers() {

@@ -1,4 +1,5 @@
 const { EventEmitter } = require('node:events')
+const { randomUUID } = require('node:crypto')
 
 const HEARTBEAT_TTL_MS = 4000
 const ELECTION_INTERVAL_MS = 500
@@ -51,7 +52,7 @@ function createClusterCoordinator({
 }) {
   const heartbeatKey = `cluster:heartbeat:${nodeId}`
   const leaderKey = 'cluster:leader'
-  const token = `${nodeId}:${Math.random().toString(36).slice(2)}`
+  const token = `${nodeId}:${randomUUID()}`
   let timer = null
   let started = false
   let leader = false
