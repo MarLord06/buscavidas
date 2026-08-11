@@ -220,7 +220,14 @@ function createGameServer(options = {}) {
       publishClusterStatus(socket).catch(() => {})
     })
   })
-  const socketHandlers = attachSocketHandlers({ io, game })
+  const socketHandlers = attachSocketHandlers({
+    io,
+    game,
+    rateLimit: {
+      maxCommands: config.maxCommandsPerWindow,
+      windowMilliseconds: config.rateLimitWindowMilliseconds,
+    },
+  })
   coordinator.on?.('leader-changed', handleLeaderChanged)
 
   if (coordinator.isLeader()) {

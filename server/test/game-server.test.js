@@ -74,6 +74,42 @@ test('expone un servidor iniciable en un puerto efímero', async (t) => {
   assert.ok(port > 0);
 });
 
+test('limita comandos mutables por conexión sin limitar heartbeats', async (t) => {
+  const gameServer = createGameServer({
+    config: {
+      clientUrl: '*',
+      maxCommandsPerWindow: 2,
+      rateLimitWindowMilliseconds: 60_000,
+    },
+  });
+  const port = await gameServer.listen(0);
+  const host = await connect(`http://127.0.0.1:${port}`);
+  t.after(async () => {
+    host.close();
+    await gameServer.close();
+  });
+
+  const first = await emitWithAck(host, 'create-room', {
+    playerName: 'Ana',
+    commandId: 'rate-limit-1',
+  });
+  const second = await emitWithAck(host, 'create-room', {
+    playerName: 'Beto',
+    commandId: 'rate-limit-2',
+  });
+  const limited = await emitWithAck(host, 'create-room', {
+    playerName: 'Caro',
+    commandId: 'rate-limit-3',
+  });
+  const heartbeat = await emitWithAck(host, 'player-heartbeat', {});
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.equal(limited.success, false);
+  assert.equal(limited.code, 'RATE_LIMITED');
+  assert.equal(heartbeat.success, true);
+});
+
 test('crea una sala, admite tres jugadores e inicia una partida', async (t) => {
   const gameServer = createGameServer({ clientUrl: '*' });
   const port = await gameServer.listen(0);

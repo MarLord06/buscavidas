@@ -96,7 +96,9 @@ describe('cliente distribuido', () => {
       })
     })
 
-    cy.get('[data-testid="room-version"]').should('have.text', '5')
+    cy.contains('.room-row', 'LATEST')
+      .find('[data-testid="room-version"]')
+      .should('have.text', '5')
   })
 
   it('detiene los reintentos internos cuando vence la reconexión', () => {

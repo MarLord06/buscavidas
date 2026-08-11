@@ -28,16 +28,29 @@ function latestRoom(currentRoom, incomingRoom) {
 }
 
 function updateClusterStatus(currentStatus, clusterStatus) {
+  const incomingRooms = normalizeRooms(clusterStatus.rooms)
+  const incomingRoomCodes = new Set(
+    incomingRooms.map((room) => room.roomCode),
+  )
+  const snapshotClock = Number(clusterStatus.lamportClock) || 0
+  const newerRoomsMissingFromSnapshot = currentStatus.rooms.filter((room) => {
+    const roomClock = Number(room.lamportClock) || 0
+    return !incomingRoomCodes.has(room.roomCode) && roomClock > snapshotClock
+  })
+
   return {
     ...EMPTY_STATUS,
     ...clusterStatus,
     nodes: clusterStatus.nodes || [],
-    rooms: normalizeRooms(clusterStatus.rooms).map((incomingRoom) => {
-      const currentRoom = currentStatus.rooms.find(
-        (room) => room.roomCode === incomingRoom.roomCode,
-      )
-      return latestRoom(currentRoom, incomingRoom)
-    }),
+    rooms: [
+      ...incomingRooms.map((incomingRoom) => {
+        const currentRoom = currentStatus.rooms.find(
+          (room) => room.roomCode === incomingRoom.roomCode,
+        )
+        return latestRoom(currentRoom, incomingRoom)
+      }),
+      ...newerRoomsMissingFromSnapshot,
+    ],
     events: clusterStatus.events || [],
   }
 }

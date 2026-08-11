@@ -1,5 +1,8 @@
 const { randomUUID } = require('node:crypto')
 
+const DEFAULT_MAX_COMMANDS_PER_WINDOW = 12
+const DEFAULT_RATE_LIMIT_WINDOW_MILLISECONDS = 5000
+
 function metadata(socket, data = {}) {
   return {
     commandId: data.commandId || randomUUID(),
@@ -14,8 +17,51 @@ function normalizeDataAndCallback(data, callback) {
   return { data: data || {}, callback }
 }
 
-function attachSocketHandlers({ io, game }) {
+function consumeCommandAllowance(socket, rateLimit) {
+  const currentTime = Date.now()
+  const currentWindow = socket.data.commandWindow
+
+  if (!currentWindow || currentTime >= currentWindow.expiresAt) {
+    socket.data.commandWindow = {
+      count: 1,
+      expiresAt: currentTime + rateLimit.windowMilliseconds,
+    }
+    return true
+  }
+
+  if (currentWindow.count >= rateLimit.maxCommands) {
+    return false
+  }
+
+  currentWindow.count += 1
+  return true
+}
+
+function registerLimitedHandler(socket, eventName, handler, rateLimit) {
+  socket.on(eventName, async (data, callback) => {
+    if (!consumeCommandAllowance(socket, rateLimit)) {
+      const normalized = normalizeDataAndCallback(data, callback)
+      normalized.callback?.({
+        success: false,
+        code: 'RATE_LIMITED',
+        message: 'Demasiadas solicitudes; inténtalo nuevamente en unos segundos',
+      })
+      return
+    }
+
+    await handler(data, callback)
+  })
+}
+
+function attachSocketHandlers({ io, game, rateLimit = {} }) {
   const pendingDisconnects = new Set()
+  const commandRateLimit = {
+    maxCommands:
+      Number(rateLimit.maxCommands) || DEFAULT_MAX_COMMANDS_PER_WINDOW,
+    windowMilliseconds:
+      Number(rateLimit.windowMilliseconds) ||
+      DEFAULT_RATE_LIMIT_WINDOW_MILLISECONDS,
+  }
 
   function trackDisconnect(promise) {
     pendingDisconnects.add(promise)
@@ -33,7 +79,7 @@ function attachSocketHandlers({ io, game }) {
   io.on('connection', (socket) => {
     console.log(`Cliente conectado: ${socket.id}`)
 
-    socket.on('create-room', async (data, callback) => {
+    registerLimitedHandler(socket, 'create-room', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const requestData = normalized.data
       const commandMetadata = metadata(socket, requestData)
@@ -65,9 +111,9 @@ function attachSocketHandlers({ io, game }) {
       if (result.success) {
         await emitRoomStateToSocket(socket, result.roomCode)
       }
-    })
+    }, commandRateLimit)
 
-    socket.on('join-room', async (data, callback) => {
+    registerLimitedHandler(socket, 'join-room', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const requestData = normalized.data
       const commandMetadata = metadata(socket, requestData)
@@ -103,9 +149,9 @@ function attachSocketHandlers({ io, game }) {
       if (result.success) {
         await emitRoomStateToSocket(socket, result.roomCode)
       }
-    })
+    }, commandRateLimit)
 
-    socket.on('start-game', async (data, callback) => {
+    registerLimitedHandler(socket, 'start-game', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = socket.data.roomCode
       const result = await game.startGame({
@@ -120,9 +166,9 @@ function attachSocketHandlers({ io, game }) {
       if (result.success) {
         console.log(`La partida de la sala ${roomCode} comenzó`)
       }
-    })
+    }, commandRateLimit)
 
-    socket.on('reveal-cell', async (data, callback) => {
+    registerLimitedHandler(socket, 'reveal-cell', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = socket.data.roomCode
       const result = await game.revealCell({
@@ -134,9 +180,9 @@ function attachSocketHandlers({ io, game }) {
 
       normalized.callback?.(result)
 
-    })
+    }, commandRateLimit)
 
-    socket.on('restart-game', async (data, callback) => {
+    registerLimitedHandler(socket, 'restart-game', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = socket.data.roomCode
       const result = await game.restartGame({
@@ -152,7 +198,7 @@ function attachSocketHandlers({ io, game }) {
         console.log(`La sala ${roomCode} inició una nueva partida`)
         io.to(roomCode).emit('game-restarted')
       }
-    })
+    }, commandRateLimit)
 
     socket.on('leave-room', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
@@ -175,7 +221,7 @@ function attachSocketHandlers({ io, game }) {
 
     })
 
-    socket.on('join-as-spectator', async (data, callback) => {
+    registerLimitedHandler(socket, 'join-as-spectator', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = String(normalized.data.roomCode || '').trim().toUpperCase()
 
@@ -201,7 +247,7 @@ function attachSocketHandlers({ io, game }) {
       console.log(`Un espectador ingresó a la sala ${roomCode}`)
       normalized.callback?.({ success: true, roomCode })
       socket.emit('room-updated', room)
-    })
+    }, commandRateLimit)
 
     socket.on('player-heartbeat', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)

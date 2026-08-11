@@ -18,8 +18,8 @@ no se incluyen en el repositorio ni en las capturas.
 
 | Capa | Comando | Resultado comprobado |
 | --- | --- | --- |
-| Unitarias e integración | `npm run test:coverage` | 46 pruebas aprobadas, 0 fallidas. |
-| Cobertura del servidor | `npm run test:coverage` | 91.18 % de líneas globales; 93.35 % en `server/`. |
+| Unitarias e integración | `npm run test:coverage` | 47 pruebas aprobadas, 0 fallidas. |
+| Cobertura del servidor | `npm run test:coverage` | 91.62 % de líneas globales; 93.55 % en `server/`. |
 | Calidad de cliente | `npm run quality:lint` | ESLint finaliza sin errores. |
 | Compilación | `npm run quality:build` | Vite genera el build de producción correctamente. |
 | End-to-end | `TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e` | 7 pruebas Cypress aprobadas, 0 fallidas. |
@@ -81,10 +81,10 @@ terceros.
 | SEC-01 | Modificar `create-room` y enviar `playerName` con solo espacios. | Aprobada: el backend respondió `success: false` y `Debes escribir tu nombre`. |
 | SEC-02 | Reenviar una creación válida con el mismo `commandId`. | Aprobada: devolvió el mismo `roomCode`, jugador y versión original; no creó otra sala. |
 | SEC-03 | Inspeccionar `cluster-status` recibido por un cliente de juego. | Hallazgo corregido: antes exponía salas, jugadores y partidas de todo el clúster. Ahora solo el dashboard se suscribe y recibe resúmenes sin jugadores ni tablero. |
+| SEC-04 | Enviar más comandos mutables que el máximo permitido desde una misma conexión. | Aprobada: el comando excedente recibe `success: false` y código `RATE_LIMITED`; los heartbeats permanecen disponibles para no desconectar al jugador. |
 
-La corrección de SEC-03 tiene una prueba de regresión de servidor: verifica
-que un socket no suscrito no reciba telemetría y que el resumen del dashboard
-no contenga las propiedades `players` ni `game`.
-
-Pendiente: ejecutar una prueba de límite de solicitudes controlada y registrar
-la respuesta ante flooding sin degradar el entorno de demostración.
+Las correcciones de SEC-03 y SEC-04 tienen pruebas de regresión de servidor.
+La primera verifica que un socket no suscrito no reciba telemetría y que el
+resumen del dashboard no contenga las propiedades `players` ni `game`; la
+segunda configura dos comandos por ventana, confirma el rechazo del tercero y
+comprueba que `player-heartbeat` no quede limitado.
