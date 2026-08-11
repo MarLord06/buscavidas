@@ -126,6 +126,7 @@ describe('cliente distribuido', () => {
     let discoveryRequests = 0
     cy.intercept('GET', '**/cluster/leader', (request) => {
       discoveryRequests += 1
+      const recoveredServerUrl = new URL(request.url).origin
       request.reply({
         body: {
           leader: discoveryRequests === 1
@@ -135,7 +136,7 @@ describe('cliente distribuido', () => {
               }
             : {
                 nodeId: 2,
-                publicUrl: 'http://127.0.0.1:3001',
+                publicUrl: recoveredServerUrl,
               },
         },
       })

@@ -69,6 +69,22 @@ webhook hacia una dirección loopback.
 
 ## Próxima actividad de V&V
 
-Pendiente: ejecutar Burp Suite contra el entorno local para inspeccionar HTTP
-y WebSockets, validar entradas manipuladas, replay, flooding y los controles
-de identidad implementados mediante `clientId` y `commandId`.
+## Pruebas de seguridad con Burp Suite
+
+Las pruebas se realizaron contra la instancia local del equipo usando el
+navegador integrado de Burp Suite Community Edition. El alcance fue el juego
+local y sus mensajes Socket.IO; no se realizaron pruebas contra sistemas de
+terceros.
+
+| ID | Prueba | Resultado |
+| --- | --- | --- |
+| SEC-01 | Modificar `create-room` y enviar `playerName` con solo espacios. | Aprobada: el backend respondió `success: false` y `Debes escribir tu nombre`. |
+| SEC-02 | Reenviar una creación válida con el mismo `commandId`. | Aprobada: devolvió el mismo `roomCode`, jugador y versión original; no creó otra sala. |
+| SEC-03 | Inspeccionar `cluster-status` recibido por un cliente de juego. | Hallazgo corregido: antes exponía salas, jugadores y partidas de todo el clúster. Ahora solo el dashboard se suscribe y recibe resúmenes sin jugadores ni tablero. |
+
+La corrección de SEC-03 tiene una prueba de regresión de servidor: verifica
+que un socket no suscrito no reciba telemetría y que el resumen del dashboard
+no contenga las propiedades `players` ni `game`.
+
+Pendiente: ejecutar una prueba de límite de solicitudes controlada y registrar
+la respuesta ante flooding sin degradar el entorno de demostración.

@@ -368,13 +368,19 @@ test('publica telemetría real del líder, nodos, salas y eventos', async (t) =>
     forceNew: true,
     transports: ['websocket'],
   });
-  const initialStatusPromise = nextEvent(host, 'cluster-status');
+  let unsolicitedStatus = null;
+  host.once('cluster-status', (status) => {
+    unsolicitedStatus = status;
+  });
   const connected = new Promise((resolve, reject) => {
     host.once('connect', resolve);
     host.once('connect_error', reject);
   });
   host.connect();
   await connected;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(unsolicitedStatus, null);
 
   t.after(async () => {
     host.close();
@@ -389,6 +395,8 @@ test('publica telemetría real del líder, nodos, salas y eventos', async (t) =>
     await Promise.all([firstRedis.quit(), thirdRedis.quit()]);
   });
 
+  const initialStatusPromise = nextEvent(host, 'cluster-status');
+  host.emit('subscribe-dashboard');
   const initialStatus = await initialStatusPromise;
   assert.equal(initialStatus.leader.nodeId, 3);
   assert.deepEqual(
@@ -415,7 +423,9 @@ test('publica telemetría real del líder, nodos, salas y eventos', async (t) =>
   assert.equal(room.roomCode, created.roomCode);
   assert.equal(room.stateVersion, created.stateVersion);
   assert.equal(roomStatus.lamportClock, created.lamportClock);
-  assert.equal(room.players.length, 1);
+  assert.equal(room.playerCount, 1);
+  assert.equal('players' in room, false);
+  assert.equal('game' in room, false);
   assert.ok(
     roomStatus.events.some(
       (event) =>

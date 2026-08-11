@@ -93,6 +93,7 @@ function Dashboard() {
     socket.on('cluster-status', handleClusterStatus)
     socket.on('leader-changed', handleLeaderChanged)
     socket.on('room-updated', handleRoomUpdated)
+    socket.emit('subscribe-dashboard')
 
     return () => {
       unsubscribeClock()
@@ -176,7 +177,7 @@ function Dashboard() {
               <div className="room-row" key={room.roomCode}>
                 <div>
                   <strong>{room.roomCode}</strong>
-                  <small>{room.players?.length || 0} jugadores</small>
+                  <small>{room.playerCount ?? room.players?.length ?? 0} jugadores</small>
                 </div>
                 <span>
                   {'v'}<b data-testid="room-version">

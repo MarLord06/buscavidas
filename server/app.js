@@ -88,7 +88,7 @@ function createGameServer(options = {}) {
           stateVersion: change.stateVersion,
           lamportClock: change.lamportClock,
         }).catch(() => {})
-        publishClusterStatus(io).catch(() => {})
+        publishClusterStatus().catch(() => {})
       }
     },
   })
@@ -122,7 +122,7 @@ function createGameServer(options = {}) {
     return enqueueTelemetry(() => telemetry.recordEvent(type, details))
   }
 
-  function publishClusterStatus(target = io.local) {
+  function publishClusterStatus(target = io.to('dashboard')) {
     if (closing) {
       return Promise.resolve(null)
     }
@@ -186,7 +186,7 @@ function createGameServer(options = {}) {
         ? `Nodo ${leader.nodeId} elegido líder`
         : 'El clúster no tiene líder',
       nodeId: leader?.nodeId ?? null,
-    }).then(() => publishClusterStatus(io)).catch((error) => {
+    }).then(() => publishClusterStatus()).catch((error) => {
       console.error('No se pudo registrar el cambio de líder', error)
     })
 
@@ -215,7 +215,10 @@ function createGameServer(options = {}) {
 
   io.adapter(createAdapter(publisher, subscriber))
   io.on('connection', (socket) => {
-    publishClusterStatus(socket).catch(() => {})
+    socket.on('subscribe-dashboard', async () => {
+      await socket.join('dashboard')
+      publishClusterStatus(socket).catch(() => {})
+    })
   })
   const socketHandlers = attachSocketHandlers({ io, game })
   coordinator.on?.('leader-changed', handleLeaderChanged)

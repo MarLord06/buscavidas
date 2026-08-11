@@ -45,7 +45,15 @@ function createClusterTelemetryService({
       roomCodes.map((roomCode) => game.getRoomState(roomCode)),
     )
 
-    return rooms.filter(Boolean)
+    return rooms.filter(Boolean).map((room) => ({
+      roomCode: room.roomCode,
+      status: room.status,
+      playerCount: room.players.length,
+      connectedPlayerCount: room.players.filter((player) => player.connected)
+        .length,
+      lamportClock: room.lamportClock,
+      stateVersion: room.stateVersion,
+    }))
   }
 
   async function getEvents() {
