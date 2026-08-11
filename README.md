@@ -2,7 +2,8 @@
 
 Juego multijugador en tiempo real inspirado en Buscaminas. Tres jugadores compiten dentro de una misma sala para descubrir casillas seguras y conseguir la mayor puntuación.
 
-El proyecto utiliza un cliente web desarrollado con React y un servidor Node.js que sincroniza las salas, el tablero y las puntuaciones mediante Socket.IO.
+El proyecto utiliza un cliente web desarrollado con React y tres nodos Node.js
+que sincronizan salas, tablero y puntuaciones mediante Socket.IO y Redis.
 
 ## Funciones principales
 
@@ -17,6 +18,9 @@ El proyecto utiliza un cliente web desarrollado con React y un servidor Node.js 
 - Reconexión de jugadores desconectados.
 - Cambio automático de creador cuando el anfitrión abandona la sala.
 - Diseño adaptable para computadoras y dispositivos móviles.
+- Ejecución local en tres nodos coordinados por Redis, con elección de líder,
+  locks por sala, reloj Lamport, versiones de estado y recuperación del líder.
+- Código QR para compartir una sala y dashboard de telemetría del clúster.
 
 ## Reglas de puntuación
 
@@ -42,6 +46,7 @@ El proyecto utiliza un cliente web desarrollado con React y un servidor Node.js 
 - Express
 - Socket.IO
 - CORS
+- Redis (`ioredis` y adaptador Redis de Socket.IO)
 
 ## Requisitos
 
@@ -50,6 +55,7 @@ Antes de ejecutar el proyecto debes tener instalado:
 - [Node.js](https://nodejs.org/) 22.12 o una versión posterior para ejecutar la aplicación, las pruebas Cypress y el análisis con SonarScanner.
 - npm, incluido con Node.js.
 - Un navegador web moderno.
+- Redis local para ejecutar el clúster distribuido.
 
 ## Instalación
 
@@ -74,7 +80,36 @@ cd ../server
 npm install
 ```
 
-## Ejecución
+## Ejecución distribuida local
+
+La operación de tres nodos requiere Redis. Inicia el servicio y verifica su
+conectividad desde la raíz del proyecto:
+
+```bash
+brew services start redis
+npm run redis:check
+```
+
+Después inicia el clúster:
+
+```bash
+npm run start:cluster
+```
+
+Los nodos se exponen en los puertos `3001`, `3002` y `3003`; con los tres
+activos, el nodo 3 es el líder esperado. Inicia el cliente contra el líder:
+
+```bash
+VITE_SERVER_URL=http://localhost:3003 npm --prefix client run dev
+```
+
+La guía de recuperación del líder, la demostración con tres clientes y los
+límites de esta configuración están en
+[docs/distributed-operation.md](docs/distributed-operation.md). En particular,
+esta versión depende de **una sola instancia Redis local**: no implementa
+Redis Sentinel, réplicas, Redis Cluster ni alta disponibilidad de Redis.
+
+## Ejecución de un nodo único
 
 El cliente y el servidor deben permanecer activos al mismo tiempo. Abre dos terminales en la carpeta principal del proyecto.
 
@@ -157,6 +192,10 @@ npm test
 Vite en el 5173 y ejecuta Cypress en modo headless. Para generar el reporte de
 cobertura LCOV que SonarQube importa, usa `npm run test:coverage`.
 
+La [matriz de validación distribuida](docs/distributed-validation-matrix.md)
+indica qué prueba cubre WebSockets, clientes simultáneos, Lamport, locks,
+versiones, heartbeats, failover, QR/dashboard y el límite de Redis.
+
 ## Cómo jugar
 
 1. El primer jugador escribe su nombre y crea una sala.
@@ -213,7 +252,11 @@ Se comprobó correctamente:
 
 ## Consideraciones
 
-Las salas y las partidas se almacenan temporalmente en la memoria del servidor. Si el servidor se reinicia, las salas activas se eliminan.
+Las salas, comandos idempotentes, locks y leases se almacenan en Redis. Un
+nodo que caiga puede ser reemplazado por otro nodo vivo y recuperar las salas
+desde Redis. Redis sigue siendo un único punto de coordinación en esta
+configuración local: si Redis cae, el clúster no puede continuar y no hay
+Sentinel, réplica ni failover de Redis configurado.
 
 ## Autores
 
