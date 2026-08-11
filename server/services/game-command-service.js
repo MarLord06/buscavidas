@@ -777,7 +777,7 @@ function createGameCommandService({
 
   async function toggleFlag(command) {
     return runRoomCommand(command, async (room) => {
-      if (!room || room.status !== 'playing' || !room.game) {
+      if (room?.status !== 'playing' || !room.game) {
         return { mutated: false, result: { success: false, message: 'La partida no está activa' } }
       }
 
