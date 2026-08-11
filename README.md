@@ -210,6 +210,43 @@ La [matriz de validación distribuida](docs/distributed-validation-matrix.md)
 indica qué prueba cubre WebSockets, clientes simultáneos, Lamport, locks,
 versiones, heartbeats, failover, QR/dashboard y el límite de Redis.
 
+## Integración continua con Jenkins
+
+El repositorio contiene un `Jenkinsfile` declarativo para ejecutar la
+validación completa desde Jenkins LTS local. El controlador se instala de forma
+nativa y se abre en `http://localhost:8080`; SonarQube permanece en
+`http://localhost:9000`.
+
+Antes de crear el job, en Jenkins se deben instalar los plugins **Pipeline**,
+**NodeJS** y **SonarQube Scanner**. En **Manage Jenkins → Tools**, registra una
+instalación NodeJS con el nombre exacto `NodeJS-22`. En **Manage Jenkins →
+System → SonarQube servers**, registra el servidor con el nombre exacto
+`SonarQube` y la URL `http://localhost:9000`.
+
+Genera un token de análisis en SonarQube y guárdalo en **Manage Jenkins →
+Credentials** como credencial de tipo **Secret text** con el ID exacto
+`sonarqube-token`. El token no debe copiarse al repositorio, al Jenkinsfile ni
+a las capturas.
+
+Para que la etapa **Quality Gate** termine automáticamente, registra en
+SonarQube el webhook siguiente desde **Administration → Configuration →
+Webhooks**:
+
+```text
+http://127.0.0.1:8080/sonarqube-webhook/
+```
+
+Después crea un elemento **Pipeline** llamado `buscaminas-tripartito`, elige
+**Pipeline script from SCM**, selecciona el repositorio Git y usa `Jenkinsfile`
+como Script Path. **Build Now** ejecuta estas etapas:
+
+```text
+Install → Redis → Lint → Coverage → E2E → Build → SonarQube → Quality Gate
+```
+
+El pipeline evita ejecuciones concurrentes porque Cypress usa puertos locales,
+y conserva el reporte LCOV y capturas Cypress como artefactos del build.
+
 ## Cómo jugar
 
 1. El primer jugador escribe su nombre y crea una sala.
