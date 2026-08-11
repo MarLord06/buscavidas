@@ -81,7 +81,7 @@ terceros.
 | SEC-01 | Modificar `create-room` y enviar `playerName` con solo espacios. | Aprobada: el backend respondió `success: false` y `Debes escribir tu nombre`. |
 | SEC-02 | Reenviar una creación válida con el mismo `commandId`. | Aprobada: devolvió el mismo `roomCode`, jugador y versión original; no creó otra sala. |
 | SEC-03 | Inspeccionar `cluster-status` recibido por un cliente de juego. | Hallazgo corregido: antes exponía salas, jugadores y partidas de todo el clúster. Ahora solo el dashboard se suscribe y recibe resúmenes sin jugadores ni tablero. |
-| SEC-04 | Enviar más comandos mutables que el máximo permitido desde una misma conexión. | Aprobada: el comando excedente recibe `success: false` y código `RATE_LIMITED`; los heartbeats permanecen disponibles para no desconectar al jugador. |
+| SEC-04 | Enviar 13 comandos `create-room` inválidos desde una misma conexión Socket.IO. | Aprobada: los primeros 12 fueron validados normalmente; el decimotercero recibió `success: false` y código `RATE_LIMITED`, sin crear salas. Los heartbeats permanecen disponibles para no desconectar al jugador. |
 
 Las correcciones de SEC-03 y SEC-04 tienen pruebas de regresión de servidor.
 La primera verifica que un socket no suscrito no reciba telemetría y que el
