@@ -6,6 +6,22 @@ const LOCK_RETRY_DELAY_MILLISECONDS = 100
 const LOCK_RETRIES = 3
 const LOCK_RENEWAL_INTERVAL_MILLISECONDS = 1000
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function lockLostError() {
+  return Object.assign(new Error('Se perdió el lock de la sala'), {
+    code: 'LOCK_LOST',
+  })
+}
+
+function lockUnavailableError() {
+  return Object.assign(new Error('No se pudo obtener el lock de la sala'), {
+    code: 'LOCK_UNAVAILABLE',
+  })
+}
+
 const RELEASE_LOCK = `
 if redis.call('get', KEYS[1]) == ARGV[1] then
   return redis.call('del', KEYS[1])
@@ -117,10 +133,6 @@ function createRedisRoomRepository({
     return keyFor(`lock:room:${roomCode}`)
   }
 
-  function delay(milliseconds) {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds))
-  }
-
   function renewLock(key, token) {
     return redis.eval(
       RENEW_LOCK,
@@ -129,12 +141,6 @@ function createRedisRoomRepository({
       token,
       LOCK_TTL_MILLISECONDS,
     )
-  }
-
-  function lockLostError() {
-    return Object.assign(new Error('Se perdió el lock de la sala'), {
-      code: 'LOCK_LOST',
-    })
   }
 
   async function getRoom(roomCode) {
@@ -251,7 +257,7 @@ function createRedisRoomRepository({
       }
     }
 
-    throw { code: 'LOCK_UNAVAILABLE' }
+    throw lockUnavailableError()
   }
 
   async function getCommand(roomCode, commandId) {

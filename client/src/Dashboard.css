@@ -2,10 +2,7 @@
   min-height: 100vh;
   padding: clamp(20px, 4vw, 48px);
   color: #f8fafc;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(124, 58, 237, 0.28), transparent 38%),
-    radial-gradient(circle at 100% 85%, rgba(14, 165, 233, 0.16), transparent 35%),
-    #090612;
+  background: #090612;
 }
 
 .dashboard-header {
@@ -184,8 +181,8 @@
   width: min(100%, 1180px);
   margin: 16px auto 0;
   padding: 12px 15px;
-  color: #fde68a;
-  background: rgba(245, 158, 11, 0.08);
+  color: #ffffff;
+  background: #78350f;
   border: 1px solid rgba(245, 158, 11, 0.25);
   border-radius: 12px;
 }

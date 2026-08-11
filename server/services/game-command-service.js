@@ -78,26 +78,76 @@ function getPublicGame(game) {
     startedAt: game.startedAt,
     endedAt: game.endedAt,
     winnerIds: game.winnerIds,
-    cells: game.board.map((cell) => ({
-      index: cell.index,
-      revealed: cell.revealed,
-      revealedBy: cell.revealed ? cell.revealedBy : null,
-      value: cell.revealed
-        ? cell.isMine
-          ? 'mine'
-          : cell.nearbyMines
-        : null,
-    })),
+    cells: game.board.map((cell) => {
+      let value = null
+
+      if (cell.revealed) {
+        value = cell.isMine ? 'mine' : cell.nearbyMines
+      }
+
+      return {
+        index: cell.index,
+        revealed: cell.revealed,
+        revealedBy: cell.revealed ? cell.revealedBy : null,
+        value,
+      }
+    }),
   }
 }
 
 function getPublicPlayer(player) {
-  const {
-    clientId: _clientId,
-    connectionId: _connectionId,
-    ...publicPlayer
-  } = player
-  return publicPlayer
+  return Object.fromEntries(
+    Object.entries(player).filter(([key]) =>
+      key !== 'clientId' && key !== 'connectionId'),
+  )
+}
+
+function heartbeatBelongsToPlayer(serializedHeartbeat, player) {
+  if (!serializedHeartbeat) return false
+
+  try {
+    const heartbeat = JSON.parse(serializedHeartbeat)
+    if (typeof heartbeat === 'number' && Number.isFinite(heartbeat)) return true
+
+    return (
+      heartbeat &&
+      typeof heartbeat === 'object' &&
+      (heartbeat.connectionId ?? null) === (player.connectionId ?? null)
+    )
+  } catch {
+    return false
+  }
+}
+
+function normalizeCommand(command = {}) {
+  return { ...command, commandId: command.commandId || randomUUID() }
+}
+
+function resultWithMetadata(command, room, result) {
+  return {
+    ...result,
+    commandId: command.commandId,
+    lamportClock: Number(room?.lamportClock) || 0,
+    stateVersion: Number(room?.stateVersion) || 0,
+  }
+}
+
+function advanceRoom(room, command) {
+  room.lamportClock = Math.max(
+    Number(room.lamportClock) || 0,
+    Number(command.lamportClock) || 0,
+  ) + 1
+  room.stateVersion = (Number(room.stateVersion) || 0) + 1
+}
+
+function generateRoomCode() {
+  let code = ''
+
+  for (let index = 0; index < 6; index += 1) {
+    code += ROOM_CODE_CHARACTERS[randomInt(ROOM_CODE_CHARACTERS.length)]
+  }
+
+  return code
 }
 
 function getPublicRoom(room) {
@@ -151,35 +201,6 @@ function createGameCommandService({
     }
   }
 
-  function heartbeatBelongsToPlayer(serializedHeartbeat, player) {
-    if (!serializedHeartbeat) {
-      return false
-    }
-
-    try {
-      const heartbeat = JSON.parse(serializedHeartbeat)
-
-      if (typeof heartbeat === 'number' && Number.isFinite(heartbeat)) {
-        return true
-      }
-
-      return (
-        heartbeat &&
-        typeof heartbeat === 'object' &&
-        (heartbeat.connectionId ?? null) === (player.connectionId ?? null)
-      )
-    } catch {
-      return false
-    }
-  }
-
-  function normalizeCommand(command = {}) {
-    return {
-      ...command,
-      commandId: command.commandId || randomUUID(),
-    }
-  }
-
   async function leaderRedirect() {
     if (coordinator.isLeader()) {
       return null
@@ -190,23 +211,6 @@ function createGameCommandService({
       code: 'LEADER_REDIRECT',
       leader: await coordinator.getLeader(),
     }
-  }
-
-  function resultWithMetadata(command, room, result) {
-    return {
-      ...result,
-      commandId: command.commandId,
-      lamportClock: Number(room?.lamportClock) || 0,
-      stateVersion: Number(room?.stateVersion) || 0,
-    }
-  }
-
-  function advanceRoom(room, command) {
-    room.lamportClock = Math.max(
-      Number(room.lamportClock) || 0,
-      Number(command.lamportClock) || 0,
-    ) + 1
-    room.stateVersion = (Number(room.stateVersion) || 0) + 1
   }
 
   async function runRoomCommand(command, transition) {
@@ -282,17 +286,6 @@ function createGameCommandService({
 
       return result
     })
-  }
-
-  function generateRoomCode() {
-    let code = ''
-
-    for (let index = 0; index < 6; index += 1) {
-      const position = randomInt(ROOM_CODE_CHARACTERS.length)
-      code += ROOM_CODE_CHARACTERS[position]
-    }
-
-    return code
   }
 
   async function createRoom(command) {
@@ -438,7 +431,7 @@ function createGameCommandService({
         }
       }
 
-      const playerWithName = room.players.find(
+      const playerWithName = room.players.some(
         (player) => player.name.toLowerCase() === playerName.toLowerCase(),
       )
 
@@ -571,7 +564,7 @@ function createGameCommandService({
         (currentPlayer) => currentPlayer.id === command.playerId,
       )
 
-      if (!player || !player.connected) {
+      if (!player?.connected) {
         return {
           mutated: false,
           result: {

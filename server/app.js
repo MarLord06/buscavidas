@@ -1,5 +1,5 @@
 const express = require('express')
-const http = require('http')
+const http = require('node:http')
 const cors = require('cors')
 const Redis = require('ioredis')
 const { Server } = require('socket.io')

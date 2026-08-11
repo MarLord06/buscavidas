@@ -1,27 +1,25 @@
 const { randomUUID } = require('node:crypto')
 
+function metadata(socket, data = {}) {
+  return {
+    commandId: data.commandId || randomUUID(),
+    clientId: data.clientId || socket.id,
+    lamportClock: Number(data.lamportClock) || 0,
+  }
+}
+
+function normalizeDataAndCallback(data, callback) {
+  if (typeof data === 'function') return { data: {}, callback: data }
+
+  return { data: data || {}, callback }
+}
+
 function attachSocketHandlers({ io, game }) {
   const pendingDisconnects = new Set()
 
   function trackDisconnect(promise) {
     pendingDisconnects.add(promise)
     promise.finally(() => pendingDisconnects.delete(promise))
-  }
-
-  function metadata(socket, data = {}) {
-    return {
-      commandId: data.commandId || randomUUID(),
-      clientId: data.clientId || socket.id,
-      lamportClock: Number(data.lamportClock) || 0,
-    }
-  }
-
-  function normalizeDataAndCallback(data, callback) {
-    if (typeof data === 'function') {
-      return { data: {}, callback: data }
-    }
-
-    return { data: data || {}, callback }
   }
 
   async function emitRoomStateToSocket(socket, roomCode) {
@@ -35,11 +33,13 @@ function attachSocketHandlers({ io, game }) {
   io.on('connection', (socket) => {
     console.log(`Cliente conectado: ${socket.id}`)
 
-    socket.on('create-room', async (data = {}, callback) => {
-      const commandMetadata = metadata(socket, data)
+    socket.on('create-room', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
+      const requestData = normalized.data
+      const commandMetadata = metadata(socket, requestData)
       const playerId = commandMetadata.clientId
       const result = await game.createRoom({
-        ...data,
+        ...requestData,
         ...commandMetadata,
         playerId,
         connectionId: socket.id,
@@ -60,18 +60,20 @@ function attachSocketHandlers({ io, game }) {
         console.log(`${result.player.name} creó la sala ${result.roomCode}`)
       }
 
-      callback?.(result)
+      normalized.callback?.(result)
 
       if (result.success) {
         await emitRoomStateToSocket(socket, result.roomCode)
       }
     })
 
-    socket.on('join-room', async (data = {}, callback) => {
-      const commandMetadata = metadata(socket, data)
+    socket.on('join-room', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
+      const requestData = normalized.data
+      const commandMetadata = metadata(socket, requestData)
       const playerId = commandMetadata.clientId
       const result = await game.joinRoom({
-        ...data,
+        ...requestData,
         ...commandMetadata,
         playerId,
         connectionId: socket.id,
@@ -96,7 +98,7 @@ function attachSocketHandlers({ io, game }) {
         )
       }
 
-      callback?.(result)
+      normalized.callback?.(result)
 
       if (result.success) {
         await emitRoomStateToSocket(socket, result.roomCode)
@@ -120,16 +122,17 @@ function attachSocketHandlers({ io, game }) {
       }
     })
 
-    socket.on('reveal-cell', async (data = {}, callback) => {
+    socket.on('reveal-cell', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = socket.data.roomCode
       const result = await game.revealCell({
-        ...data,
-        ...metadata(socket, data),
+        ...normalized.data,
+        ...metadata(socket, normalized.data),
         roomCode,
         playerId: socket.data.playerId || socket.id,
       })
 
-      callback?.(result)
+      normalized.callback?.(result)
 
     })
 
@@ -172,11 +175,12 @@ function attachSocketHandlers({ io, game }) {
 
     })
 
-    socket.on('join-as-spectator', async (data = {}, callback) => {
-      const roomCode = String(data.roomCode || '').trim().toUpperCase()
+    socket.on('join-as-spectator', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
+      const roomCode = String(normalized.data.roomCode || '').trim().toUpperCase()
 
       if (!roomCode) {
-        callback?.({
+        normalized.callback?.({
           success: false,
           message: 'Debes escribir el código de la sala',
         })
@@ -186,7 +190,7 @@ function attachSocketHandlers({ io, game }) {
       const room = await game.getRoomState(roomCode)
 
       if (!room) {
-        callback?.({ success: false, message: 'La sala no existe' })
+        normalized.callback?.({ success: false, message: 'La sala no existe' })
         return
       }
 
@@ -195,19 +199,20 @@ function attachSocketHandlers({ io, game }) {
       socket.data.playerId = null
       socket.data.role = 'spectator'
       console.log(`Un espectador ingresó a la sala ${roomCode}`)
-      callback?.({ success: true, roomCode })
+      normalized.callback?.({ success: true, roomCode })
       socket.emit('room-updated', room)
     })
 
-    socket.on('player-heartbeat', async (data = {}, callback) => {
+    socket.on('player-heartbeat', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
       const result = await game.heartbeatPlayer({
-        ...data,
-        ...metadata(socket, data),
+        ...normalized.data,
+        ...metadata(socket, normalized.data),
         roomCode: socket.data.roomCode,
         playerId: socket.data.playerId || socket.id,
         connectionId: socket.id,
       })
-      callback?.(result)
+      normalized.callback?.(result)
     })
 
     socket.on('disconnect', () => {
@@ -234,7 +239,7 @@ function attachSocketHandlers({ io, game }) {
   })
 
   return {
-    waitForPendingDisconnects: () => Promise.all([...pendingDisconnects]),
+    waitForPendingDisconnects: () => Promise.all(pendingDisconnects),
   }
 }
 

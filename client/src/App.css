@@ -79,8 +79,8 @@ body {
 
 .mines-counter {
   padding: 10px 15px;
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.12);
+  color: #ffffff;
+  background: #7f1d1d;
   border: 1px solid rgba(248, 113, 113, 0.32);
   border-radius: 999px;
   font-size: 17px;
@@ -184,8 +184,8 @@ body {
   margin-top: 12px;
   padding: 14px 16px;
   text-align: center;
-  color: #ddd6fe;
-  background: rgba(124, 58, 237, 0.13);
+  color: #ffffff;
+  background: #4c1d95;
   border: 1px solid rgba(167, 139, 250, 0.35);
   border-radius: 11px;
 }
@@ -238,8 +238,8 @@ body {
 
 .restart-waiting {
   padding: 12px 16px;
-  color: #ddd6fe;
-  background: rgba(124, 58, 237, 0.15);
+  color: #ffffff;
+  background: #4c1d95;
   border: 1px solid rgba(167, 139, 250, 0.35);
   border-radius: 10px;
 }
@@ -251,8 +251,8 @@ body {
   width: fit-content;
   margin: 8px auto 14px;
   padding: 7px 12px;
-  color: #bfdbfe;
-  background: rgba(37, 117, 216, 0.18);
+  color: #ffffff;
+  background: #1e3a8a;
   border: 1px solid rgba(96, 165, 250, 0.45);
   border-radius: 999px;
   font-size: 13px;
@@ -508,8 +508,8 @@ body {
 }
 
 .home .spectator-button {
-  color: #bfdbfe;
-  background: rgba(37, 99, 235, 0.1);
+  color: #ffffff;
+  background: #1e3a8a;
   border-color: rgba(96, 165, 250, 0.38);
 }
 
@@ -559,8 +559,8 @@ body {
   width: fit-content;
   margin: 10px auto 24px;
   padding: 10px 18px;
-  color: #a78bfa;
-  background: rgba(124, 58, 237, 0.16);
+  color: #ffffff;
+  background: #4c1d95;
   border: 1px solid rgba(167, 139, 250, 0.45);
   border-radius: 12px;
   font-size: 42px;
@@ -581,8 +581,8 @@ body {
   margin: 0 auto 16px;
   place-items: center;
   padding: 13px;
-  color: #cbd5e1;
-  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  background: #334155;
   border: 1px solid rgba(167, 139, 250, 0.26);
   border-radius: 15px;
   font-size: 12px;
@@ -693,14 +693,14 @@ body {
 }
 
 .home .connection.connected {
-  color: #86efac;
-  background: rgba(34, 197, 94, 0.12);
+  color: #ffffff;
+  background: #166534;
   border: 1px solid rgba(34, 197, 94, 0.28);
 }
 
 .home .connection.disconnected {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.11);
+  color: #ffffff;
+  background: #991b1b;
   border: 1px solid rgba(239, 68, 68, 0.28);
 }
 
@@ -709,8 +709,8 @@ body {
 .home .waiting-message {
   margin-top: 8px;
   padding: 13px 16px;
-  color: #c4b5fd;
-  background: rgba(124, 58, 237, 0.1);
+  color: #ffffff;
+  background: #4c1d95;
   border: 1px solid rgba(167, 139, 250, 0.24);
   border-radius: 12px;
   font-size: 13px;
@@ -718,8 +718,8 @@ body {
 }
 
 .home .ready-message {
-  color: #bfdbfe;
-  background: rgba(37, 99, 235, 0.1);
+  color: #ffffff;
+  background: #1e3a8a;
   border-color: rgba(96, 165, 250, 0.25);
 }
 
@@ -749,8 +749,8 @@ body {
 .home .error-message {
   margin-top: 14px;
   padding: 11px 13px;
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.11);
+  color: #ffffff;
+  background: #991b1b;
   border: 1px solid rgba(248, 113, 113, 0.28);
   border-radius: 10px;
   font-size: 13px;

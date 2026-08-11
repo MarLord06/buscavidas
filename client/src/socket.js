@@ -293,8 +293,8 @@ function sendCommand(command) {
   )
 }
 
-export function emitCommand(eventName, payload = {}, callback) {
-  const normalizedPayload = typeof payload === 'function' ? {} : payload
+export function emitCommand(eventName, payload, callback) {
+  const normalizedPayload = typeof payload === 'function' ? {} : (payload || {})
   const normalizedCallback =
     typeof payload === 'function' ? payload : callback
   const metadata = createCommandMetadata()

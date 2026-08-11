@@ -112,7 +112,6 @@ describe('cliente distribuido', () => {
         publicUrl: 'http://127.0.0.1:65534',
       })
     })
-    cy.wait(5250)
     cy.window()
       .its('__testSocket')
       .invoke('connectionState')
