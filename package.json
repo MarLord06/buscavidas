@@ -1,0 +1,13 @@
+{
+  "name": "buscaminas-tripartito",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "quality:lint": "npm --prefix client run lint",
+    "quality:build": "npm --prefix client run build",
+    "sonar:scan": "sonar-scanner-npm"
+  },
+  "devDependencies": {
+    "@sonar/scan": "^5.0.0"
+  }
+}
