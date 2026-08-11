@@ -15,9 +15,10 @@
 Buscaminas Tripartito es un videojuego web multijugador en tiempo real para
 tres jugadores. Los participantes crean o ingresan a una sala mediante un
 código, revelan casillas sobre un tablero común de 9 × 9 con 10 minas y
-compiten por la puntuación más alta. Las acciones y el tablero se sincronizan
-en tiempo real; además, un modo espectador permite observar una partida sin
-alterarla.
+compiten por la puntuación más alta. Cada jugador inicia con tres vidas, juega
+por turnos de doce segundos y puede revelar o colocar una bandera personal por
+casilla. Las acciones y el tablero se sincronizan en tiempo real; además, un
+modo espectador permite observar una partida sin alterarla.
 
 El sistema funciona como un laboratorio de sistemas distribuidos. El cliente
 React se comunica mediante Socket.IO con un clúster de tres nodos Node.js.
@@ -74,6 +75,8 @@ Cluster ni conmutación por error de Redis.
 | Detección de fallos | Heartbeats de nodos con TTL de 4 s y de jugadores con TTL de 15 s. |
 | Reconfiguración | El nodo vivo de mayor ID toma el lease y publica el nuevo liderazgo. |
 | Recuperación | El cliente descubre al líder sucesor y vuelve a ingresar con su identidad persistente. |
+| Turnos y vidas | Turno circular de 12 s, tres vidas por jugador, eliminación al llegar a cero y salto de jugador desconectado. |
+| Banderas personales | Cada casilla conserva los IDs que la marcaron; una bandera no bloquea ni modifica la vista de los demás jugadores. |
 
 ### 2.1 Flujo de un comando de juego
 
@@ -94,6 +97,12 @@ asume el liderazgo en menos de seis segundos. La sala permanece en Redis y el
 cliente puede recuperar su conexión contra el sucesor. Esta recuperación está
 cubierta por pruebas de failover y por
 [distributed-operation.md](distributed-operation.md).
+
+El temporizador de turnos se revisa cada 500 ms exclusivamente en el líder.
+Como el turno y su vencimiento están en el snapshot Redis de la sala, el nodo
+sucesor puede continuar el orden de juego después de una caída sin reiniciar la
+partida. Una desconexión o expiración del jugador que tenía el turno también
+activa el salto al siguiente jugador elegible.
 
 El alcance no promete tolerancia a la caída de Redis ni a la caída física de la
 máquina anfitriona: los tres procesos y Redis se ejecutan localmente para fines
@@ -118,11 +127,11 @@ de desarrollo, pruebas y feria.
 
 | Capa | Comando o evidencia | Resultado comprobado |
 | --- | --- | --- |
-| Servidor e integración | `npm run test:coverage` | 47 pruebas aprobadas, 0 fallidas. |
-| Cobertura | `npm run test:coverage` | 93.55 % de líneas en `server/`; aproximadamente 91.5 % global. |
+| Servidor e integración | `npm run test:coverage` | 56 pruebas aprobadas, 0 fallidas. |
+| Cobertura | `npm run test:coverage` | 92.69 % de líneas en `server/`; 90.58 % global. |
 | Lint | `npm run quality:lint` | ESLint finalizó sin errores. |
 | Build | `npm run quality:build` | Vite generó el build de producción correctamente. |
-| End-to-end | `TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e` | 7 casos Cypress aprobados, 0 fallidos. |
+| End-to-end | `TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e` | 8 casos Cypress aprobados, 0 fallidos. |
 | Redis | `npm run redis:check` | Respuesta `PONG`. |
 | Dependencias | `npm audit` en raíz, `server` y `client` | 0 vulnerabilidades tras actualizar dependencias transitivas. |
 | SonarQube | Etapa SonarQube de Jenkins | Quality Gate aprobado en la ejecución verificada. |
@@ -201,7 +210,7 @@ en [vv-evidence.md](vv-evidence.md).
 | Tolerancia a fallos | Expiración de heartbeats, elección de sucesor y recuperación de cliente. |
 | Calidad | SonarQube con LCOV y Quality Gate integrado al pipeline. |
 | Integración continua | Jenkins ejecuta instalación, Redis, lint, cobertura, Cypress, build y SonarQube. |
-| Pruebas automatizadas | 47 pruebas de servidor y 7 pruebas end-to-end aprobadas. |
+| Pruebas automatizadas | 56 pruebas de servidor y 8 pruebas end-to-end aprobadas. |
 | Seguridad | Validación de entradas, replay, telemetría restringida, rate limiting y auditoría de dependencias. |
 | Perfil de feria | Sala compartible, QR, interacción móvil y dashboard proyectable. |
 
@@ -214,7 +223,7 @@ datos sensibles, en los siguientes puntos:
 2. Tres jugadores conectados y tablero en curso.
 3. Dashboard con nodos 1, 2 y 3, líder, Lamport y eventos.
 4. Demostración de caída de un nodo y elección del sucesor.
-5. Salida Cypress con `7 passing` y `All specs passed`.
+5. Salida Cypress con `8 passing` y `All specs passed`.
 6. Jenkins con todas las etapas y `Finished: SUCCESS`.
 7. Overview de SonarQube con el Quality Gate aprobado.
 8. Burp Suite mostrando la respuesta Socket.IO `RATE_LIMITED`.

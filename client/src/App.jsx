@@ -40,6 +40,17 @@ function getDisplayedGameMessage(room, isSpectator, finalMessage, gameMessage) {
   return gameMessage
 }
 
+function getFlagOwners(cell, players) {
+  return (cell.flaggedBy || [])
+    .map((playerId) => players.find((player) => player.id === playerId))
+    .filter(Boolean)
+}
+
+function getTurnSecondsRemaining(turnExpiresAt, currentTime) {
+  if (!turnExpiresAt) return 0
+  return Math.max(0, Math.ceil((turnExpiresAt - currentTime) / 1000))
+}
+
 function LobbyAction({ connectedPlayers, isHost, loading, onStart, hostName }) {
   if (connectedPlayers < 3) {
     return (
@@ -85,6 +96,8 @@ function GameApp() { // NOSONAR -- coordinador de estado, eventos Socket.IO y tr
   const [isSpectator, setIsSpectator] = useState(false)
   const [loading, setLoading] = useState(false)
   const [pendingCell, setPendingCell] = useState(null)
+  const [actionMode, setActionMode] = useState('reveal')
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
   const [gameMessage, setGameMessage] = useState(
     'Selecciona una casilla para comenzar.',
   )
@@ -138,6 +151,15 @@ function GameApp() { // NOSONAR -- coordinador de estado, eventos Socket.IO y tr
 
     return () => window.clearInterval(heartbeatTimer)
   }, [room?.roomCode, isSpectator])
+
+  useEffect(() => {
+    if (room?.status !== 'playing' || !room.game?.turnExpiresAt) {
+      return undefined
+    }
+
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [room?.status, room?.game?.turnExpiresAt])
 
   function createRoom() {
     if (!playerName.trim()) {
@@ -348,6 +370,20 @@ function returnToMenu() {
     )
   }
 
+  function toggleFlag(cellIndex) {
+    if (isSpectator || room?.status !== 'playing' || pendingCell !== null) return
+
+    setPendingCell(cellIndex)
+    emitCommand('toggle-flag', { cellIndex }, (response) => {
+      setPendingCell(null)
+      setGameMessage(
+        response?.success
+          ? response.flagged ? 'Bandera colocada.' : 'Bandera retirada.'
+          : response?.message || 'No se pudo cambiar la bandera',
+      )
+    })
+  }
+
   if (
     room?.status === 'playing' ||
     room?.status === 'finished'
@@ -367,6 +403,15 @@ function returnToMenu() {
       }))
 
     const winnerIds = room.game?.winnerIds || []
+    const currentTurnPlayerId = room.game?.currentTurnPlayerId
+    const currentTurnPlayer = room.players.find(
+      (player) => player.id === currentTurnPlayerId,
+    )
+    const isCurrentTurn = currentTurnPlayerId === currentPlayerId
+    const turnSecondsRemaining = getTurnSecondsRemaining(
+      room.game?.turnExpiresAt,
+      currentTime,
+    )
 
     const winnerNames = room.players
       .filter((player) => winnerIds.includes(player.id))
@@ -433,12 +478,42 @@ function returnToMenu() {
                   <span className="score-points">
                     {player.score ?? 0} puntos
                   </span>
+                  <span className="score-points">
+                    {(player.lives ?? 3) > 0
+                      ? `${player.lives ?? 3} vidas`
+                      : 'Eliminado'}
+                  </span>
                 </div>
               </div>
             ))}
           </section>
 
           <section className="board-section">
+            <p data-testid="turn-status" className="game-message">
+              {currentTurnPlayer
+                ? `Turno de ${currentTurnPlayer.name} · ${turnSecondsRemaining}s`
+                : 'Esperando turno'}
+            </p>
+            {!isSpectator && room.status === 'playing' && (
+              <div className="game-actions">
+                <button
+                  className={actionMode === 'reveal' ? 'action-mode active' : 'action-mode'}
+                  type="button"
+                  onClick={() => setActionMode('reveal')}
+                  disabled={!isCurrentTurn}
+                >
+                  Revelar
+                </button>
+                <button
+                  className={actionMode === 'flag' ? 'action-mode active' : 'action-mode'}
+                  type="button"
+                  onClick={() => setActionMode('flag')}
+                  disabled={!isCurrentTurn}
+                >
+                  Bandera
+                </button>
+              </div>
+            )}
             <div
               className="game-board"
               style={{
@@ -455,21 +530,27 @@ function returnToMenu() {
                   cell.revealed && cell.value === 'mine'
 
                 const cellContent = getCellContent(cell, isMine)
+                const flagOwners = getFlagOwners(cell, room.players)
+                const flagDescription = flagOwners.length > 0
+                  ? `, ${flagOwners.length} bandera${flagOwners.length === 1 ? '' : 's'} de ${flagOwners.map((player) => player.name).join(', ')}`
+                  : ''
 
                 const cellDisabled =
                   isSpectator ||
                   cell.revealed ||
                   room.status === 'finished' ||
-                  pendingCell !== null
+                  pendingCell !== null ||
+                  !isCurrentTurn
 
                 return (
                   <button
                     className="board-cell covered-cell"
                     type="button"
-                    aria-label={`Casilla ${cell.index + 1}`}
+                    aria-label={`Casilla ${cell.index + 1}${flagDescription}`}
                     key={cell.index}
                     onClick={() => {
-                      revealCell(cell.index)
+                      if (actionMode === 'flag') toggleFlag(cell.index)
+                      else revealCell(cell.index)
                     }}
                     disabled={cellDisabled}
                     style={{
@@ -491,7 +572,19 @@ function returnToMenu() {
                       opacity: 1,
                     }}
                   >
-                    {cellContent}
+                    {flagOwners.length > 0 && !cell.revealed ? (
+                      <span className="cell-flags" aria-hidden="true">
+                        {flagOwners.map((player) => (
+                          <span
+                            className="cell-flag"
+                            key={player.id}
+                            style={{ backgroundColor: player.color }}
+                          >
+                            ⚑
+                          </span>
+                        ))}
+                      </span>
+                    ) : cellContent}
                   </button>
                 )
               })}

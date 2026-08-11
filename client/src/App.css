@@ -199,6 +199,44 @@ body {
   margin-top: 18px;
 }
 
+.action-mode {
+  min-width: 132px;
+  padding: 10px 16px;
+  color: #f8fafc;
+  background: rgba(49, 36, 78, 0.95);
+  border: 1px solid rgba(196, 181, 253, 0.45);
+  border-radius: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.action-mode.active {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  border-color: #c4b5fd;
+}
+
+.cell-flags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.cell-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 1;
+}
+
 .restart-button,
 .menu-button {
   min-width: 190px;

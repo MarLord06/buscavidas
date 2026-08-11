@@ -222,7 +222,7 @@ test('un nodo superviviente toma el liderazgo, lo publica y conserva la sala', a
   assert.equal(room.status, 'playing')
   assert.equal(room.stateVersion > 0, true)
   assert.equal(room.players.length, 3)
-  assert.ok(room.players.every((player) => !player.connected))
+  assert.ok(room.players.every((player) => player.connected))
   assert.equal(recoveredRoom.players[0].connected, false)
   assert.equal(recoveredRoom.hostId, 'recover-player')
   assert.equal(recoveredRoom.stateVersion, 2)
@@ -255,4 +255,57 @@ test('una caída no limpia el lease y el sucesor asume en menos de seis segundos
     Date.now() - startedAt < 6000,
     `Failover tardó ${Date.now() - startedAt} ms`,
   )
+})
+
+test('el líder sucesor procesa un turno vencido que quedó persistido en Redis', async (t) => {
+  const keyPrefix = `buscaminas:test:turn-failover:${Date.now()}:${process.pid}:`
+  const cluster = await startNodes([1, 2, 3], { keyPrefix })
+  t.after(() => cluster.stopAll())
+  const roomCode = 'TURNFAIL'
+  const room = {
+    roomCode,
+    status: 'playing',
+    hostId: 'player-1',
+    players: [
+      { id: 'player-1', name: 'Ana', score: 0, lives: 3, connected: true, connectionId: 'connection-1', color: '#8b5cf6' },
+      { id: 'player-2', name: 'Beto', score: 0, lives: 3, connected: true, connectionId: 'connection-2', color: '#22c55e' },
+      { id: 'player-3', name: 'Caro', score: 0, lives: 3, connected: true, connectionId: 'connection-3', color: '#ef4444' },
+    ],
+    game: {
+      rows: 1,
+      columns: 3,
+      mines: 0,
+      board: [],
+      revealedSafeCells: 0,
+      totalSafeCells: 3,
+      startedAt: Date.now(),
+      endedAt: null,
+      winnerIds: [],
+      currentTurnPlayerId: 'player-1',
+      turnExpiresAt: Date.now() + 60_000,
+    },
+    createdAt: Date.now(),
+    lamportClock: 0,
+    stateVersion: 1,
+  }
+  await cluster.node(3).repository.saveRoom(room)
+  await Promise.all(room.players.map((player) => cluster.node(3).game.heartbeatPlayer({
+    roomCode,
+    playerId: player.id,
+    connectionId: player.connectionId,
+  })))
+
+  await cluster.node(3).crash()
+  await waitFor(() => cluster.node(2).coordinator.isLeader(), 5900)
+  const persisted = await cluster.node(2).repository.getRoom(roomCode)
+  persisted.game.turnExpiresAt = Date.now() - 1
+  await cluster.node(2).repository.saveRoom(persisted)
+
+  await waitFor(async () => (
+    (await cluster.node(2).repository.getRoom(roomCode)).game.currentTurnPlayerId === 'player-2'
+  ), 2500)
+  const advanced = await cluster.node(2).repository.getRoom(roomCode)
+
+  assert.equal(advanced.game.currentTurnPlayerId, 'player-2')
+  assert.ok(advanced.stateVersion > room.stateVersion)
 })
