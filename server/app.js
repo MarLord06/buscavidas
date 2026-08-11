@@ -18,6 +18,7 @@ const {
 
 let standaloneServerCount = 0
 const PLAYER_RECONCILIATION_INTERVAL_MILLISECONDS = 5000
+const TURN_RECONCILIATION_INTERVAL_MILLISECONDS = 500
 const CLUSTER_TELEMETRY_INTERVAL_MILLISECONDS = 2000
 
 function createGameServer(options = {}) {
@@ -101,6 +102,7 @@ function createGameServer(options = {}) {
     clusterNodeIds: config.clusterNodeIds || [1, 2, 3],
   })
   let reconciliationTimer = null
+  let turnReconciliationTimer = null
   let reconciliationQueue = Promise.resolve()
   let telemetryTimer = null
   let telemetryQueue = Promise.resolve()
@@ -155,10 +157,29 @@ function createGameServer(options = {}) {
     }
 
     const reconciliation = reconciliationQueue.then(() =>
-      game.reconcileExpiredPlayersInRooms(),
+      Promise.all([
+        game.reconcileExpiredPlayersInRooms(),
+        game.advanceExpiredTurnsInRooms(),
+      ]),
     )
     reconciliationQueue = reconciliation.catch((error) => {
       console.error('No se pudieron reconciliar jugadores expirados', error)
+    })
+
+    return reconciliation
+  }
+
+  function reconcileTurns() {
+    if (!coordinator.isLeader()) {
+      stopReconciliation()
+      return Promise.resolve([])
+    }
+
+    const reconciliation = reconciliationQueue.then(() =>
+      game.advanceExpiredTurnsInRooms(),
+    )
+    reconciliationQueue = reconciliation.catch((error) => {
+      console.error('No se pudieron avanzar los turnos expirados', error)
     })
 
     return reconciliation
@@ -169,6 +190,11 @@ function createGameServer(options = {}) {
       clearInterval(reconciliationTimer)
       reconciliationTimer = null
     }
+
+    if (turnReconciliationTimer) {
+      clearInterval(turnReconciliationTimer)
+      turnReconciliationTimer = null
+    }
   }
 
   function scheduleReconciliation() {
@@ -177,6 +203,9 @@ function createGameServer(options = {}) {
     reconciliationTimer = setInterval(() => {
       reconcileRooms().catch(() => {})
     }, PLAYER_RECONCILIATION_INTERVAL_MILLISECONDS)
+    turnReconciliationTimer = setInterval(() => {
+      reconcileTurns().catch(() => {})
+    }, TURN_RECONCILIATION_INTERVAL_MILLISECONDS)
   }
 
   function handleLeaderChanged(leader) {
@@ -223,6 +252,7 @@ function createGameServer(options = {}) {
   const socketHandlers = attachSocketHandlers({
     io,
     game,
+    isClosing: () => closing,
     rateLimit: {
       maxCommands: config.maxCommandsPerWindow,
       windowMilliseconds: config.rateLimitWindowMilliseconds,

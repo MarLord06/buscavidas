@@ -53,7 +53,7 @@ function registerLimitedHandler(socket, eventName, handler, rateLimit) {
   })
 }
 
-function attachSocketHandlers({ io, game, rateLimit = {} }) {
+function attachSocketHandlers({ io, game, isClosing = () => false, rateLimit = {} }) {
   const pendingDisconnects = new Set()
   const commandRateLimit = {
     maxCommands:
@@ -182,6 +182,19 @@ function attachSocketHandlers({ io, game, rateLimit = {} }) {
 
     }, commandRateLimit)
 
+    registerLimitedHandler(socket, 'toggle-flag', async (data, callback) => {
+      const normalized = normalizeDataAndCallback(data, callback)
+      const roomCode = socket.data.roomCode
+      const result = await game.toggleFlag({
+        ...normalized.data,
+        ...metadata(socket, normalized.data),
+        roomCode,
+        playerId: socket.data.playerId || socket.id,
+      })
+
+      normalized.callback?.(result)
+    }, commandRateLimit)
+
     registerLimitedHandler(socket, 'restart-game', async (data, callback) => {
       const normalized = normalizeDataAndCallback(data, callback)
       const roomCode = socket.data.roomCode
@@ -264,7 +277,7 @@ function attachSocketHandlers({ io, game, rateLimit = {} }) {
     socket.on('disconnect', () => {
       console.log(`Cliente desconectado: ${socket.id}`)
 
-      if (socket.data.role !== 'player' || !socket.data.roomCode) {
+      if (isClosing() || socket.data.role !== 'player' || !socket.data.roomCode) {
         return
       }
 

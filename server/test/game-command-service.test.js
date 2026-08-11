@@ -135,6 +135,189 @@ test('aplica solo una revelación concurrente y conserva la versión secuencial'
   assert.equal((await repository.getRoom(roomCode)).stateVersion, 2)
 })
 
+test('rechaza una revelación del jugador que no posee el turno', async (t) => {
+  const { game, repository } = createGame(t)
+  const room = playableRoom('TURN01')
+  room.players.push(
+    {
+      id: 'player-2',
+      name: 'Beto',
+      score: 0,
+      ready: false,
+      connected: true,
+      color: '#22c55e',
+    },
+    {
+      id: 'player-3',
+      name: 'Caro',
+      score: 0,
+      ready: false,
+      connected: true,
+      color: '#ef4444',
+    },
+  )
+  room.players.forEach((player) => {
+    player.lives = 3
+  })
+  room.game.currentTurnPlayerId = 'player-1'
+  room.game.turnExpiresAt = 1_012_000
+  room.game.board.forEach((cell) => {
+    cell.flaggedBy = []
+  })
+  await repository.saveRoom(room)
+
+  const result = await game.revealCell({
+    roomCode: room.roomCode,
+    playerId: 'player-2',
+    cellIndex: 0,
+    commandId: 'turn-out-of-order',
+  })
+
+  assert.equal(result.success, false)
+  assert.equal(result.code, 'NOT_YOUR_TURN')
+  assert.equal((await repository.getRoom(room.roomCode)).game.board[0].revealed, false)
+})
+
+test('permite una bandera individual y avanza el turno', async (t) => {
+  const { game, repository } = createGame(t)
+  const room = playableRoom('FLAG01')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.forEach((player) => { player.lives = 3 })
+  room.game.currentTurnPlayerId = 'player-1'
+  room.game.turnExpiresAt = 1_012_000
+  room.game.board.forEach((cell) => { cell.flaggedBy = [] })
+  await repository.saveRoom(room)
+
+  const result = await game.toggleFlag({
+    roomCode: room.roomCode,
+    playerId: 'player-1',
+    cellIndex: 1,
+    commandId: 'flag-one',
+  })
+
+  assert.equal(result.success, true)
+  const saved = await repository.getRoom(room.roomCode)
+  assert.deepEqual(saved.game.board[1].flaggedBy, ['player-1'])
+  assert.equal(saved.game.currentTurnPlayerId, 'player-2')
+})
+
+test('no consume el comando de expiración antes de tiempo y avanza al vencer', async (t) => {
+  let currentTime = 1_000_000
+  const { game, repository } = createGame(t, undefined, {
+    now: () => currentTime,
+  })
+  const room = playableRoom('EXPIRE01')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.forEach((player) => { player.lives = 3 })
+  room.game.currentTurnPlayerId = 'player-1'
+  room.game.turnExpiresAt = 1_012_000
+  await repository.saveRoom(room)
+
+  const early = await game.advanceExpiredTurn(room.roomCode)
+  assert.equal(early.success, false)
+
+  currentTime = 1_012_001
+  const expired = await game.advanceExpiredTurn(room.roomCode)
+  const saved = await repository.getRoom(room.roomCode)
+
+  assert.equal(expired.success, true)
+  assert.equal(saved.game.currentTurnPlayerId, 'player-2')
+  assert.equal(saved.game.turnExpiresAt, 1_024_001)
+})
+
+test('rechaza una acción tardía y avanza el turno en la misma transición', async (t) => {
+  let currentTime = 1_012_001
+  const { game, repository } = createGame(t, undefined, {
+    now: () => currentTime,
+  })
+  const room = playableRoom('LATE01')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.forEach((player) => { player.lives = 3 })
+  room.game.currentTurnPlayerId = 'player-1'
+  room.game.turnExpiresAt = 1_012_000
+  await repository.saveRoom(room)
+
+  const result = await game.revealCell({
+    roomCode: room.roomCode,
+    playerId: 'player-1',
+    cellIndex: 0,
+    commandId: 'late-reveal',
+  })
+  const saved = await repository.getRoom(room.roomCode)
+
+  assert.equal(result.success, false)
+  assert.equal(result.code, 'TURN_EXPIRED')
+  assert.equal(saved.game.board[0].revealed, false)
+  assert.equal(saved.game.currentTurnPlayerId, 'player-2')
+})
+
+test('una mina quita la última vida y excluye al jugador eliminado del turno', async (t) => {
+  const { game, repository } = createGame(t)
+  const room = playableRoom('LIVES01')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.push({ id: 'player-3', name: 'Caro', score: 0, ready: false, connected: true, color: '#ef4444', lives: 3 })
+  room.players[1].lives = 1
+  room.game.currentTurnPlayerId = 'player-2'
+  room.game.turnExpiresAt = 1_012_000
+  await repository.saveRoom(room)
+
+  const result = await game.revealCell({
+    roomCode: room.roomCode,
+    playerId: 'player-2',
+    cellIndex: 2,
+    commandId: 'last-life-mine',
+  })
+  const saved = await repository.getRoom(room.roomCode)
+
+  assert.equal(result.success, true)
+  assert.equal(saved.players[1].lives, 0)
+  assert.equal(saved.game.currentTurnPlayerId, 'player-3')
+})
+
+test('una desconexión del turno finaliza la partida si queda un jugador elegible', async (t) => {
+  const { game, repository } = createGame(t)
+  const room = playableRoom('LEAVE01')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.push({ id: 'player-3', name: 'Caro', score: 0, ready: false, connected: true, color: '#ef4444', lives: 0 })
+  room.game.currentTurnPlayerId = 'player-2'
+  room.game.turnExpiresAt = 1_012_000
+  await repository.saveRoom(room)
+
+  const result = await game.leaveRoom({
+    roomCode: room.roomCode,
+    playerId: 'player-2',
+    commandId: 'leave-current',
+    disconnected: true,
+  })
+  const saved = await repository.getRoom(room.roomCode)
+
+  assert.equal(result.success, true)
+  assert.equal(saved.status, 'finished')
+  assert.deepEqual(saved.game.winnerIds, ['player-1'])
+})
+
+test('una desconexión fuera de turno finaliza la partida si queda un jugador elegible', async (t) => {
+  const { game, repository } = createGame(t)
+  const room = playableRoom('LEAVE02')
+  room.players.push({ id: 'player-2', name: 'Beto', score: 0, ready: false, connected: true, color: '#22c55e', lives: 3 })
+  room.players.push({ id: 'player-3', name: 'Caro', score: 0, ready: false, connected: true, color: '#ef4444', lives: 0 })
+  room.game.currentTurnPlayerId = 'player-1'
+  room.game.turnExpiresAt = 1_012_000
+  await repository.saveRoom(room)
+
+  const result = await game.leaveRoom({
+    roomCode: room.roomCode,
+    playerId: 'player-2',
+    commandId: 'leave-non-current',
+    disconnected: true,
+  })
+  const saved = await repository.getRoom(room.roomCode)
+
+  assert.equal(result.success, true)
+  assert.equal(saved.status, 'finished')
+  assert.deepEqual(saved.game.winnerIds, ['player-1'])
+})
+
 test('un commandId repetido devuelve el resultado original sin cambiar puntaje', async (t) => {
   const { game, repository } = createGame(t)
   const roomCode = 'PLAY02'

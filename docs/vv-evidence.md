@@ -18,11 +18,11 @@ no se incluyen en el repositorio ni en las capturas.
 
 | Capa | Comando | Resultado comprobado |
 | --- | --- | --- |
-| Unitarias e integración | `npm run test:coverage` | 47 pruebas aprobadas, 0 fallidas. |
-| Cobertura del servidor | `npm run test:coverage` | 91.62 % de líneas globales; 93.55 % en `server/`. |
+| Unitarias e integración | `npm run test:coverage` | 56 pruebas aprobadas, 0 fallidas. |
+| Cobertura del servidor | `npm run test:coverage` | 90.58 % de líneas globales y 92.69 % en `server/`; genera `server/coverage/lcov.info` para SonarQube. |
 | Calidad de cliente | `npm run quality:lint` | ESLint finaliza sin errores. |
 | Compilación | `npm run quality:build` | Vite genera el build de producción correctamente. |
-| End-to-end | `TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e` | 7 pruebas Cypress aprobadas, 0 fallidas. |
+| End-to-end | `TEST_SERVER_PORT=3101 TEST_CLIENT_PORT=5273 npm run test:e2e` | 8 pruebas Cypress aprobadas, 0 fallidas. |
 | Calidad estática | Etapa `SonarQube` en Jenkins | Quality Gate aprobado. |
 
 La ejecución E2E usa puertos configurables para no reutilizar una instancia
@@ -40,6 +40,8 @@ para que Jenkins ejecute las pruebas contra su propia revisión del código.
 | Idempotencia | Pruebas de `commandId` repetido que devuelven el resultado original sin reaplicar la operación. |
 | Detección de fallos | Heartbeats con TTL y reconciliación de jugadores expirados. |
 | Reconfiguración | Pruebas de failover donde el nodo superviviente asume el liderazgo y conserva la sala. |
+| Turnos sincronizados | Rechazo fuera de turno o tardío, avance único al vencer y continuación desde el líder sucesor. |
+| Vidas y banderas | Mina que elimina y salta al siguiente jugador; banderas independientes de dos jugadores en una misma celda. |
 | Interfaz de feria | Código QR de sala, enlace compartible y dashboard de clúster en tiempo real. |
 
 La matriz detallada que enlaza cada requisito con su prueba está en
@@ -63,7 +65,7 @@ webhook hacia una dirección loopback.
 2. Sala creada con código QR y tres jugadores conectados.
 3. Dashboard mostrando líder, nodos, reloj Lamport, salas y eventos.
 4. Demostración de caída de un nodo y elección del líder sucesor.
-5. Resultado de Cypress: `7 passing` y `All specs passed`.
+5. Resultado de Cypress: `8 passing` y `All specs passed`.
 6. Consola de Jenkins con todas las etapas y `Finished: SUCCESS`.
 7. Overview de SonarQube con Quality Gate aprobado, cobertura y duplicación.
 

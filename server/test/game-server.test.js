@@ -31,6 +31,19 @@ function emitWithAck(client, event, payload) {
   });
 }
 
+function emitWithAckTimeout(client, event, payload, timeout = 500) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout esperando ACK de ${event}`));
+    }, timeout);
+
+    client.emit(event, payload, (result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
 function nextRoomUpdate(client, predicate) {
   return new Promise((resolve) => {
     const onUpdate = (room) => {
@@ -171,6 +184,49 @@ test('crea una sala, admite tres jugadores e inicia una partida', async (t) => {
   assert.equal(joinedAsSpectator.success, true);
   assert.equal(spectatorReveal.success, false);
   assert.equal(spectatorReveal.message, 'El jugador no está conectado');
+});
+
+test('dos jugadores pueden conservar banderas propias y un tercero fuera de turno es rechazado', async (t) => {
+  const gameServer = createGameServer({ clientUrl: '*' });
+  const port = await gameServer.listen(0);
+  const url = `http://127.0.0.1:${port}`;
+  const host = await connect(url);
+  const secondPlayer = await connect(url);
+  const thirdPlayer = await connect(url);
+  t.after(async () => {
+    host.close();
+    secondPlayer.close();
+    thirdPlayer.close();
+    await gameServer.close();
+  });
+
+  const created = await emitWithAck(host, 'create-room', { playerName: 'Ana' });
+  await emitWithAck(secondPlayer, 'join-room', { playerName: 'Beto', roomCode: created.roomCode });
+  await emitWithAck(thirdPlayer, 'join-room', { playerName: 'Caro', roomCode: created.roomCode });
+  const startedRoom = nextRoomUpdate(host, (room) => room.status === 'playing');
+  await emitWithAck(host, 'start-game');
+  await startedRoom;
+
+  const flagUpdate = nextRoomUpdate(
+    host,
+    (room) => room.game?.cells[0].flaggedBy?.includes(created.player.id),
+  );
+  const flagResult = await emitWithAckTimeout(host, 'toggle-flag', { cellIndex: 0 });
+  const updatedRoom = await flagUpdate;
+  const secondFlagUpdate = nextRoomUpdate(
+    host,
+    (room) => room.game?.cells[0].flaggedBy?.length === 2,
+  );
+  const secondFlag = await emitWithAckTimeout(secondPlayer, 'toggle-flag', { cellIndex: 0 });
+  const twoFlagsRoom = await secondFlagUpdate;
+  const outOfTurn = await emitWithAckTimeout(host, 'toggle-flag', { cellIndex: 0 });
+
+  assert.equal(flagResult.success, true);
+  assert.deepEqual(updatedRoom.game.cells[0].flaggedBy, [created.player.id]);
+  assert.equal(secondFlag.success, true);
+  assert.equal(twoFlagsRoom.game.cells[0].flaggedBy.length, 2);
+  assert.equal(outOfTurn.success, false);
+  assert.equal(outOfTurn.code, 'NOT_YOUR_TURN');
 });
 
 test('reconecta la misma identidad por clientId y rechaza suplantación por nombre', async (t) => {

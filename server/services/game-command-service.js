@@ -5,6 +5,8 @@ const PLAYER_COLORS = ['#8b5cf6', '#22c55e', '#ef4444']
 const PLAYER_HEARTBEAT_TTL_MILLISECONDS = 15_000
 const PLAYER_HEARTBEAT_ROOMS_KEY = 'player-heartbeat:rooms'
 const CREATE_COMMAND_SCOPE = '__create__'
+const TURN_DURATION_MILLISECONDS = 12_000
+const INITIAL_PLAYER_LIVES = 3
 
 function createBoard(rows, columns, mines, now) {
   const totalCells = rows * columns
@@ -48,6 +50,7 @@ function createBoard(rows, columns, mines, now) {
       nearbyMines,
       revealed: false,
       revealedBy: null,
+      flaggedBy: [],
     }
   })
 
@@ -61,6 +64,8 @@ function createBoard(rows, columns, mines, now) {
     startedAt: now(),
     endedAt: null,
     winnerIds: [],
+    currentTurnPlayerId: null,
+    turnExpiresAt: null,
   }
 }
 
@@ -78,6 +83,8 @@ function getPublicGame(game) {
     startedAt: game.startedAt,
     endedAt: game.endedAt,
     winnerIds: game.winnerIds,
+    currentTurnPlayerId: game.currentTurnPlayerId || null,
+    turnExpiresAt: game.turnExpiresAt || null,
     cells: game.board.map((cell) => {
       let value = null
 
@@ -90,9 +97,84 @@ function getPublicGame(game) {
         revealed: cell.revealed,
         revealedBy: cell.revealed ? cell.revealedBy : null,
         value,
+        flaggedBy: cell.revealed ? [] : cell.flaggedBy || [],
       }
     }),
   }
+}
+
+function getEligiblePlayers(room) {
+  return room.players.filter(
+    (player) => player.connected && (player.lives ?? INITIAL_PLAYER_LIVES) > 0,
+  )
+}
+
+function advanceTurn(room, currentTime) {
+  const currentIndex = room.players.findIndex(
+    (player) => player.id === room.game.currentTurnPlayerId,
+  )
+  const startIndex = currentIndex === -1 ? 0 : currentIndex + 1
+
+  for (let offset = 0; offset < room.players.length; offset += 1) {
+    const candidate = room.players[
+      (startIndex + offset) % room.players.length
+    ]
+
+    if (candidate.connected && (candidate.lives ?? INITIAL_PLAYER_LIVES) > 0) {
+      room.game.currentTurnPlayerId = candidate.id
+      room.game.turnExpiresAt = currentTime + TURN_DURATION_MILLISECONDS
+      return candidate
+    }
+  }
+
+  room.game.currentTurnPlayerId = null
+  room.game.turnExpiresAt = null
+  return null
+}
+
+function finishGame(room, winnerIds, currentTime) {
+  room.status = 'finished'
+  room.game.endedAt = currentTime
+  room.game.winnerIds = winnerIds
+  room.game.currentTurnPlayerId = null
+  room.game.turnExpiresAt = null
+}
+
+function advanceTurnOrFinish(room, currentTime, finishIfNoEligible = false) {
+  const eligiblePlayers = getEligiblePlayers(room)
+
+  if (eligiblePlayers.length === 1) {
+    finishGame(
+      room,
+      eligiblePlayers.map((player) => player.id),
+      currentTime,
+    )
+    return null
+  }
+
+  if (eligiblePlayers.length === 0) {
+    if (finishIfNoEligible) {
+      finishGame(room, [], currentTime)
+      return null
+    }
+
+    room.game.currentTurnPlayerId = null
+    room.game.turnExpiresAt = null
+    return null
+  }
+
+  return advanceTurn(room, currentTime)
+}
+
+function finishIfOneEligiblePlayer(room, currentTime) {
+  if (!room.game) return false
+
+  const eligiblePlayers = getEligiblePlayers(room)
+
+  if (eligiblePlayers.length !== 1) return false
+
+  finishGame(room, [eligiblePlayers[0].id], currentTime)
+  return true
 }
 
 function getPublicPlayer(player) {
@@ -415,6 +497,14 @@ function createGameCommandService({
           room.hostId = existingPlayer.id
         }
 
+        if (
+          room.status === 'playing' &&
+          room.game &&
+          !room.game.currentTurnPlayerId
+        ) {
+          advanceTurn(room, now())
+        }
+
         return {
           mutated:
             !wasConnected || previousConnectionId !== command.connectionId,
@@ -536,9 +626,12 @@ function createGameCommandService({
 
       room.players.forEach((player) => {
         player.score = 0
+        player.lives = INITIAL_PLAYER_LIVES
       })
       room.status = 'playing'
       room.game = createBoard(9, 9, 10, now)
+      room.game.currentTurnPlayerId = connectedPlayers[0].id
+      room.game.turnExpiresAt = now() + TURN_DURATION_MILLISECONDS
 
       return { mutated: true, result: { success: true } }
     })
@@ -574,6 +667,31 @@ function createGameCommandService({
         }
       }
 
+      if ((player.lives ?? INITIAL_PLAYER_LIVES) <= 0) {
+        return {
+          mutated: false,
+          result: { success: false, code: 'PLAYER_ELIMINATED', message: 'Ya no tienes vidas' },
+        }
+      }
+
+      if (
+        room.game.currentTurnPlayerId &&
+        room.game.currentTurnPlayerId !== command.playerId
+      ) {
+        return {
+          mutated: false,
+          result: { success: false, code: 'NOT_YOUR_TURN', message: 'No es tu turno' },
+        }
+      }
+
+      if (room.game.turnExpiresAt && now() >= room.game.turnExpiresAt) {
+        advanceTurnOrFinish(room, now())
+        return {
+          mutated: true,
+          result: { success: false, code: 'TURN_EXPIRED', message: 'Tu turno terminó' },
+        }
+      }
+
       const cellIndex = Number(command.cellIndex)
 
       if (
@@ -604,12 +722,14 @@ function createGameCommandService({
 
       cell.revealed = true
       cell.revealedBy = command.playerId
+      cell.flaggedBy = []
 
       let revealResult = 'safe'
       let message = ''
 
       if (cell.isMine) {
         player.score = Math.max(0, player.score - 2)
+        player.lives = Math.max(0, (player.lives ?? INITIAL_PLAYER_LIVES) - 1)
         revealResult = 'mine'
         message = '¡Encontraste una mina! Pierdes 2 puntos.'
       } else {
@@ -619,14 +739,16 @@ function createGameCommandService({
       }
 
       if (room.game.revealedSafeCells >= room.game.totalSafeCells) {
-        room.status = 'finished'
-        room.game.endedAt = now()
         const highestScore = Math.max(
           ...room.players.map((currentPlayer) => currentPlayer.score),
         )
-        room.game.winnerIds = room.players
+        finishGame(room, room.players
           .filter((currentPlayer) => currentPlayer.score === highestScore)
-          .map((currentPlayer) => currentPlayer.id)
+          .map((currentPlayer) => currentPlayer.id), now())
+      } else {
+        if (room.game.currentTurnPlayerId) {
+          advanceTurnOrFinish(room, now(), cell.isMine)
+        }
       }
 
       return {
@@ -639,6 +761,48 @@ function createGameCommandService({
           finished: room.status === 'finished',
         },
       }
+    })
+  }
+
+  async function toggleFlag(command) {
+    return runRoomCommand(command, async (room) => {
+      if (!room || room.status !== 'playing' || !room.game) {
+        return { mutated: false, result: { success: false, message: 'La partida no está activa' } }
+      }
+
+      const player = room.players.find((currentPlayer) => currentPlayer.id === command.playerId)
+      const cellIndex = Number(command.cellIndex)
+      const cell = room.game.board[cellIndex]
+
+      if (!player?.connected || (player.lives ?? INITIAL_PLAYER_LIVES) <= 0) {
+        return { mutated: false, result: { success: false, message: 'El jugador no puede realizar esta acción' } }
+      }
+
+      if (room.game.currentTurnPlayerId !== command.playerId) {
+        return { mutated: false, result: { success: false, code: 'NOT_YOUR_TURN', message: 'No es tu turno' } }
+      }
+
+      if (room.game.turnExpiresAt && now() >= room.game.turnExpiresAt) {
+        advanceTurnOrFinish(room, now())
+        return {
+          mutated: true,
+          result: { success: false, code: 'TURN_EXPIRED', message: 'Tu turno terminó' },
+        }
+      }
+
+      if (!Number.isInteger(cellIndex) || !cell || cell.revealed) {
+        return { mutated: false, result: { success: false, message: 'La casilla no admite banderas' } }
+      }
+
+      cell.flaggedBy = cell.flaggedBy || []
+      const flagIndex = cell.flaggedBy.indexOf(command.playerId)
+      const flagged = flagIndex === -1
+
+      if (flagged) cell.flaggedBy.push(command.playerId)
+      else cell.flaggedBy.splice(flagIndex, 1)
+
+      advanceTurnOrFinish(room, now())
+      return { mutated: true, result: { success: true, flagged } }
     })
   }
 
@@ -685,9 +849,12 @@ function createGameCommandService({
 
       room.players.forEach((player) => {
         player.score = 0
+        player.lives = INITIAL_PLAYER_LIVES
       })
       room.status = 'playing'
       room.game = createBoard(9, 9, 10, now)
+      room.game.currentTurnPlayerId = connectedPlayers[0].id
+      room.game.turnExpiresAt = now() + TURN_DURATION_MILLISECONDS
 
       return { mutated: true, result: { success: true } }
     })
@@ -714,9 +881,19 @@ function createGameCommandService({
         return { mutated: false, result: { success: true } }
       }
 
-      if (command.disconnected) {
-        room.players[playerIndex].connected = false
-      } else {
+      const wasCurrentTurn =
+        room.status === 'playing' &&
+        room.game?.currentTurnPlayerId === command.playerId
+
+      room.players[playerIndex].connected = false
+
+      if (wasCurrentTurn) {
+        advanceTurnOrFinish(room, now())
+      } else if (room.status === 'playing') {
+        finishIfOneEligiblePlayer(room, now())
+      }
+
+      if (!command.disconnected) {
         room.players.splice(playerIndex, 1)
       }
 
@@ -860,6 +1037,17 @@ function createGameCommandService({
         player.connected = false
       }
 
+      if (
+        room.status === 'playing' &&
+        expiredPlayers.some(
+          (player) => player.id === room.game?.currentTurnPlayerId,
+        )
+      ) {
+        advanceTurnOrFinish(room, now())
+      } else if (room.status === 'playing') {
+        finishIfOneEligiblePlayer(room, now())
+      }
+
       const host = room.players.find((player) => player.id === room.hostId)
 
       if (!host?.connected) {
@@ -912,6 +1100,36 @@ function createGameCommandService({
     return Promise.all(roomCodes.map(reconcileExpiredPlayers))
   }
 
+  async function advanceExpiredTurn(roomCode) {
+    const room = await repository.getRoom(roomCode)
+    const expiresAt = room?.game?.turnExpiresAt
+
+    if (!expiresAt || now() < expiresAt) return { success: false }
+
+    return runRoomCommand({
+      roomCode,
+      commandId: `turn-expired:${roomCode}:${expiresAt}`,
+      lamportClock: 0,
+    }, async (currentRoom) => {
+      if (
+        currentRoom?.status !== 'playing' ||
+        currentRoom.game?.turnExpiresAt !== expiresAt ||
+        now() < expiresAt
+      ) {
+        return { mutated: false, result: { success: false } }
+      }
+
+      advanceTurnOrFinish(currentRoom, now())
+      return { mutated: true, result: { success: true } }
+    })
+  }
+
+  async function advanceExpiredTurnsInRooms() {
+    if (!coordinator.isLeader()) return []
+
+    return Promise.all((await listRoomCodes()).map(advanceExpiredTurn))
+  }
+
   async function getRoomState(roomCode) {
     return getPublicRoom(await repository.getRoom(roomCode))
   }
@@ -921,11 +1139,14 @@ function createGameCommandService({
     joinRoom: (command) => joinRoom(normalizeCommand(command)),
     startGame: (command) => startGame(normalizeCommand(command)),
     revealCell: (command) => revealCell(normalizeCommand(command)),
+    toggleFlag: (command) => toggleFlag(normalizeCommand(command)),
     restartGame: (command) => restartGame(normalizeCommand(command)),
     leaveRoom: (command) => leaveRoom(normalizeCommand(command)),
     heartbeatPlayer: (command) => heartbeatPlayer(normalizeCommand(command)),
     reconcileExpiredPlayers,
     reconcileExpiredPlayersInRooms,
+    advanceExpiredTurn,
+    advanceExpiredTurnsInRooms,
     getRoomState,
   }
 }
