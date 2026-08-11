@@ -51,6 +51,22 @@ function getTurnSecondsRemaining(turnExpiresAt, currentTime) {
   return Math.max(0, Math.ceil((turnExpiresAt - currentTime) / 1000))
 }
 
+function getFlagMessage(response) {
+  if (!response?.success) {
+    return response?.message || 'No se pudo cambiar la bandera'
+  }
+
+  return response.flagged ? 'Bandera colocada.' : 'Bandera retirada.'
+}
+
+function getFlagDescription(flagOwners) {
+  if (flagOwners.length === 0) return ''
+
+  const pluralSuffix = flagOwners.length === 1 ? '' : 's'
+  const ownerNames = flagOwners.map((player) => player.name).join(', ')
+  return `, ${flagOwners.length} bandera${pluralSuffix} de ${ownerNames}`
+}
+
 function LobbyAction({ connectedPlayers, isHost, loading, onStart, hostName }) {
   if (connectedPlayers < 3) {
     return (
@@ -376,11 +392,7 @@ function returnToMenu() {
     setPendingCell(cellIndex)
     emitCommand('toggle-flag', { cellIndex }, (response) => {
       setPendingCell(null)
-      setGameMessage(
-        response?.success
-          ? response.flagged ? 'Bandera colocada.' : 'Bandera retirada.'
-          : response?.message || 'No se pudo cambiar la bandera',
-      )
+      setGameMessage(getFlagMessage(response))
     })
   }
 
@@ -531,9 +543,7 @@ function returnToMenu() {
 
                 const cellContent = getCellContent(cell, isMine)
                 const flagOwners = getFlagOwners(cell, room.players)
-                const flagDescription = flagOwners.length > 0
-                  ? `, ${flagOwners.length} bandera${flagOwners.length === 1 ? '' : 's'} de ${flagOwners.map((player) => player.name).join(', ')}`
-                  : ''
+                const flagDescription = getFlagDescription(flagOwners)
 
                 const cellDisabled =
                   isSpectator ||
