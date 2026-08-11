@@ -40,7 +40,36 @@ function getDisplayedGameMessage(room, isSpectator, finalMessage, gameMessage) {
   return gameMessage
 }
 
-function GameApp() {
+function LobbyAction({ connectedPlayers, isHost, loading, onStart, hostName }) {
+  if (connectedPlayers < 3) {
+    return (
+      <div className="waiting-message">
+        Esperando a los demás jugadores...
+      </div>
+    )
+  }
+
+  if (isHost) {
+    return (
+      <button
+        className="start-button"
+        type="button"
+        onClick={onStart}
+        disabled={loading}
+      >
+        {loading ? 'Iniciando...' : 'Iniciar partida'}
+      </button>
+    )
+  }
+
+  return (
+    <div className="waiting-message ready-message">
+      Esperando que {hostName || 'el creador'} inicie la partida...
+    </div>
+  )
+}
+
+function GameApp() { // NOSONAR -- coordinador de estado, eventos Socket.IO y tres vistas del juego.
   const publicClientUrl = (
     import.meta.env.VITE_PUBLIC_URL || window.location.origin
   ).replace(/\/$/, '')
@@ -618,28 +647,13 @@ function returnToMenu() {
             ))}
           </div>
 
-          {connectedPlayers < 3 ? (
-            <div className="waiting-message">
-              Esperando a los demás jugadores...
-            </div>
-          ) : isHost ? (
-            <button
-              className="start-button"
-              type="button"
-              onClick={startGame}
-              disabled={loading}
-            >
-              {loading
-                ? 'Iniciando...'
-                : 'Iniciar partida'}
-            </button>
-          ) : (
-            <div className="waiting-message ready-message">
-              Esperando que{' '}
-              {hostPlayer?.name || 'el creador'} inicie la
-              partida...
-            </div>
-          )}
+          <LobbyAction
+            connectedPlayers={connectedPlayers}
+            isHost={isHost}
+            loading={loading}
+            onStart={startGame}
+            hostName={hostPlayer?.name}
+          />
           {isSpectator && (
             <button
               className="menu-button spectator-leave-button"
