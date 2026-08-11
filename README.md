@@ -104,6 +104,41 @@ Abre en el navegador la dirección que muestre Vite, normalmente:
 http://localhost:5173
 ```
 
+## Análisis de calidad con SonarQube
+
+El proyecto se analiza con una instancia local de SonarQube Community Build.
+Esta herramienta se ejecuta fuera de la aplicación y no forma parte del
+despliegue del cliente ni del servidor.
+
+Antes de iniciar SonarQube, selecciona el JDK 25 compatible:
+
+```bash
+export JAVA_HOME="$(brew --prefix openjdk@25)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+cd "$HOME/Applications/sonarqube-26.7.0.124771/bin/macosx-universal-64"
+./sonar.sh start
+curl --fail --silent http://localhost:9000/api/system/status
+```
+
+El último comando debe mostrar `"status":"UP"`. Para detener el servicio de
+forma ordenada, ejecuta `./sonar.sh stop` desde esa misma carpeta.
+
+Para analizar este repositorio, desde la carpeta raíz configura el token de
+análisis de SonarQube solo en la terminal actual y ejecuta los comandos de
+calidad:
+
+```bash
+read -s SONAR_TOKEN
+export SONAR_TOKEN
+npm install
+npm run quality:lint
+npm run quality:build
+npm run sonar:scan -- -Dsonar.host.url=http://localhost:9000 -Dsonar.token="$SONAR_TOKEN"
+```
+
+No guardes el token en archivos versionados ni lo compartas. El análisis se
+verá en `http://localhost:9000/dashboard?id=buscaminas-tripartito`.
+
 ## Cómo jugar
 
 1. El primer jugador escribe su nombre y crea una sala.

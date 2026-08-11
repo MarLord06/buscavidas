@@ -6,7 +6,7 @@
 
 **Architecture:** SonarQube será un proceso local externo al proyecto, ejecutado con JDK 25 y la base H2 embebida solo para desarrollo y demostración. El repositorio contendrá una configuración de análisis y un comando reproducible; el token permanece fuera de Git, en una variable de entorno local o una credencial de Jenkins.
 
-**Tech Stack:** macOS, Homebrew, OpenJDK 25, SonarQube Community Build 26.7.0.124771, Node.js, SonarScanner for NPM (`@sonar/scan`).
+**Tech Stack:** macOS, Homebrew, OpenJDK 25, SonarQube Community Build 26.7.0.124771, Node.js, SonarScanner for NPM (`@sonar/scan` 5.0.0).
 
 ## Global Constraints
 
@@ -165,10 +165,10 @@ Create `package.json` with:
   "scripts": {
     "quality:lint": "npm --prefix client run lint",
     "quality:build": "npm --prefix client run build",
-    "sonar:scan": "sonar"
+    "sonar:scan": "sonar-scanner-npm"
   },
   "devDependencies": {
-    "@sonar/scan": "^4.3.5"
+    "@sonar/scan": "^5.0.0"
   }
 }
 ```
@@ -193,7 +193,7 @@ sonar.projectKey=buscaminas-tripartito
 sonar.projectName=Buscaminas Tripartito
 sonar.sourceEncoding=UTF-8
 sonar.sources=client/src,server
-sonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/.sonar/**
+sonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/.sonar/**,**/.scannerwork/**
 ```
 
 - [ ] **Step 4: Protect scanner artifacts from Git**
@@ -202,6 +202,7 @@ Append this line to `.gitignore`:
 
 ```gitignore
 .sonar/
+.scannerwork/
 ```
 
 Run:
@@ -304,5 +305,3 @@ Expected: the commit contains instructions and evidence criteria only, with no c
 - Jenkins pipeline and Quality Gate webhook configuration.
 - Burp Suite security-testing procedure and findings report.
 - Remediation of issues reported by the first scan.
-
-
