@@ -53,6 +53,7 @@ function createClusterCoordinator({
   let timer = null
   let started = false
   let leader = false
+  let tickQueue = Promise.resolve()
 
   function now() {
     return clock.now()
@@ -122,7 +123,7 @@ function createClusterCoordinator({
     }
   }
 
-  async function tick() {
+  async function runTick(shouldElect) {
     const expiresAt = now() + HEARTBEAT_TTL_MS
     await redis.set(
       heartbeatKey,
@@ -130,6 +131,10 @@ function createClusterCoordinator({
       'PX',
       HEARTBEAT_TTL_MS,
     )
+
+    if (!shouldElect) {
+      return
+    }
 
     const nodes = await getNodes()
     const expectedLeader = nodes.at(-1)
@@ -157,14 +162,27 @@ function createClusterCoordinator({
     leader = acquired === 1
   }
 
+  function enqueueTick(operation) {
+    const queuedTick = tickQueue.then(operation)
+    tickQueue = queuedTick.catch(() => {})
+
+    return queuedTick
+  }
+
+  function tick() {
+    return enqueueTick(() => runTick(true))
+  }
+
   async function start() {
     if (started) {
       return
     }
 
     started = true
-    await tick()
-    leader = false
+    await enqueueTick(async () => {
+      const clusterHasLiveNodes = (await getNodes()).length > 0
+      await runTick(clusterHasLiveNodes)
+    })
     timer = setInterval(() => {
       tick().catch((error) => {
         console.error('No se pudo renovar el liderazgo del clúster', error)
@@ -179,6 +197,7 @@ function createClusterCoordinator({
     }
 
     started = false
+    await tickQueue
     leader = false
     await redis.del(heartbeatKey)
     await redis.eval(RELEASE_LEADER, 1, leaderKey, nodeId, token)
