@@ -10,6 +10,10 @@ pipeline {
     timestamps()
   }
 
+  triggers {
+    pollSCM('H/5 * * * *')
+  }
+
   stages {
     stage('Install') {
       steps {
