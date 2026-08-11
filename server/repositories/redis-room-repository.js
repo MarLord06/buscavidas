@@ -66,6 +66,35 @@ redis.call('sadd', KEYS[3], ARGV[4])
 return 1
 `
 
+const SAVE_ROOM_COMMAND_AND_HEARTBEAT_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2])
+redis.call('set', KEYS[3], ARGV[3], 'EX', ARGV[4])
+redis.call('set', KEYS[4], ARGV[5], 'PX', ARGV[6])
+redis.call('sadd', KEYS[5], ARGV[7])
+return 1
+`
+
+const SAVE_ROOM_AND_HEARTBEAT_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('set', KEYS[2], ARGV[2])
+redis.call('set', KEYS[3], ARGV[3], 'PX', ARGV[4])
+redis.call('sadd', KEYS[4], ARGV[5])
+return 1
+`
+
+const REMOVE_HEARTBEAT_ROOM_WITH_LOCK = `
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('srem', KEYS[2], ARGV[2])
+return 1
+`
+
 function createRedisRoomRepository({
   redis,
   keyPrefix = '',
@@ -356,6 +385,74 @@ function createRedisRoomRepository({
     }
   }
 
+  async function saveRoomCommandAndPlayerHeartbeat(
+    room,
+    commandId,
+    result,
+    heartbeat,
+    lock,
+    commandScope = room.roomCode,
+  ) {
+    lock.throwIfLost()
+    const saved = await redis.eval(
+      SAVE_ROOM_COMMAND_AND_HEARTBEAT_WITH_LOCK,
+      5,
+      lock.key,
+      roomKey(room.roomCode),
+      commandKey(commandScope, commandId),
+      heartbeat.key,
+      heartbeat.roomsKey,
+      lock.token,
+      JSON.stringify(room),
+      JSON.stringify(result),
+      COMMAND_TTL_SECONDS,
+      heartbeat.value,
+      heartbeat.ttlMilliseconds,
+      heartbeat.roomCode,
+    )
+
+    if (saved !== 1) {
+      throw lockLostError()
+    }
+  }
+
+  async function saveRoomAndPlayerHeartbeat(room, heartbeat, lock) {
+    lock.throwIfLost()
+    const saved = await redis.eval(
+      SAVE_ROOM_AND_HEARTBEAT_WITH_LOCK,
+      4,
+      lock.key,
+      roomKey(room.roomCode),
+      heartbeat.key,
+      heartbeat.roomsKey,
+      lock.token,
+      JSON.stringify(room),
+      heartbeat.value,
+      heartbeat.ttlMilliseconds,
+      heartbeat.roomCode,
+    )
+
+    if (saved !== 1) {
+      throw lockLostError()
+    }
+  }
+
+  async function removeHeartbeatRoom(roomsKey, roomCode, lock) {
+    lock.throwIfLost()
+    const removed = await redis.eval(
+      REMOVE_HEARTBEAT_ROOM_WITH_LOCK,
+      2,
+      lock.key,
+      roomsKey,
+      lock.token,
+      roomCode,
+    )
+
+    if (removed !== 1) {
+      throw lockLostError()
+    }
+  }
+
   return {
     getRoom,
     listRoomCodes,
@@ -366,6 +463,9 @@ function createRedisRoomRepository({
     saveRoomAndCommand,
     createRoomAndCommand,
     savePlayerHeartbeat,
+    saveRoomCommandAndPlayerHeartbeat,
+    saveRoomAndPlayerHeartbeat,
+    removeHeartbeatRoom,
   }
 }
 

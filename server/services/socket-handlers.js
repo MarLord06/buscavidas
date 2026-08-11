@@ -55,6 +55,7 @@ function attachSocketHandlers({ io, game }) {
         await game.heartbeatPlayer({
           roomCode: result.roomCode,
           playerId: stablePlayerId,
+          connectionId: socket.id,
         })
         console.log(`${result.player.name} creó la sala ${result.roomCode}`)
       }
@@ -86,6 +87,7 @@ function attachSocketHandlers({ io, game }) {
         await game.heartbeatPlayer({
           roomCode: result.roomCode,
           playerId: stablePlayerId,
+          connectionId: socket.id,
         })
         console.log(
           `${result.player.name} ${
@@ -203,6 +205,7 @@ function attachSocketHandlers({ io, game }) {
         ...metadata(socket, data),
         roomCode: socket.data.roomCode,
         playerId: socket.data.playerId || socket.id,
+        connectionId: socket.id,
       })
       callback?.(result)
     })

@@ -28,6 +28,9 @@ function createRepository(t) {
       'room:LOCK01:command:cmd-1',
       'room:LOCK01:command:cmd-ttl',
       'room:LOCK01:command:cmd-atomic',
+      'room:LOCK01:command:rejoin-atomic',
+      'player:LOCK01:player-1',
+      'player-heartbeat:rooms',
       'lock:room:LOCK01',
     )
     await redis.quit()
@@ -281,6 +284,45 @@ test('no guarda heartbeat si el lock cambió de propietario', async (t) => {
     (error) => error.code === 'LOCK_LOST',
   )
 
+  assert.equal(await redis.exists('player:LOCK01:player-1'), 0)
+  assert.equal(await redis.sismember('player-heartbeat:rooms', 'LOCK01'), 0)
+})
+
+test('no confirma rejoin ni heartbeat si el lock cambió de propietario', async (t) => {
+  const { redis, repository } = createRepository(t)
+  const originalRoom = {
+    roomCode: 'LOCK01',
+    stateVersion: 1,
+    players: [{ id: 'player-1', connected: false }],
+  }
+  await repository.saveRoom(originalRoom)
+
+  await assert.rejects(
+    repository.withRoomLock('LOCK01', async (lock) => {
+      await redis.set('lock:room:LOCK01', 'new-owner', 'PX', 3000)
+      await repository.saveRoomCommandAndPlayerHeartbeat(
+        {
+          ...originalRoom,
+          stateVersion: 2,
+          players: [{ id: 'player-1', connected: true }],
+        },
+        'rejoin-atomic',
+        { success: true, stateVersion: 2 },
+        {
+          key: 'player:LOCK01:player-1',
+          roomsKey: 'player-heartbeat:rooms',
+          roomCode: 'LOCK01',
+          value: '{"connectionId":"new-socket","timestamp":1000}',
+          ttlMilliseconds: 15_000,
+        },
+        lock,
+      )
+    }),
+    (error) => error.code === 'LOCK_LOST',
+  )
+
+  assert.deepEqual(await repository.getRoom('LOCK01'), originalRoom)
+  assert.equal(await repository.getCommand('LOCK01', 'rejoin-atomic'), null)
   assert.equal(await redis.exists('player:LOCK01:player-1'), 0)
   assert.equal(await redis.sismember('player-heartbeat:rooms', 'LOCK01'), 0)
 })

@@ -244,11 +244,169 @@ test('una desconexión antigua no deshace una reconexión más reciente', async 
     connectionId: 'old-socket',
     disconnected: true,
   })
+  await game.leaveRoom({
+    roomCode: created.roomCode,
+    playerId: created.player.id,
+    commandId: 'connection-unfenced-disconnect',
+    clientId: 'stable-client',
+    disconnected: true,
+  })
 
   const room = await repository.getRoom(created.roomCode)
   assert.equal(reconnected.success, true)
   assert.equal(room.players[0].connected, true)
   assert.equal(room.players[0].connectionId, 'new-socket')
+})
+
+test('linealiza un disconnect viejo que llega durante el commit del rejoin', async (t) => {
+  const { repository, redis } = createGame(t)
+  const roomCode = 'RACE02'
+  const room = playableRoom(roomCode)
+  room.players[0].clientId = 'stable-client'
+  room.players[0].connectionId = 'old-socket'
+  room.players[0].connected = false
+  await repository.saveRoom(room)
+  const rejoinCommitStarted = createDeferred()
+  const releaseRejoinCommit = createDeferred()
+  const pausedRepository = {
+    ...repository,
+    saveRoomCommandAndPlayerHeartbeat: async (...argumentsList) => {
+      rejoinCommitStarted.resolve()
+      await releaseRejoinCommit.promise
+      return repository.saveRoomCommandAndPlayerHeartbeat(...argumentsList)
+    },
+  }
+  const game = createGameCommandService({
+    repository: pausedRepository,
+    redis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+  })
+
+  const rejoin = game.joinRoom({
+    roomCode,
+    playerName: 'Ana',
+    commandId: 'racing-rejoin',
+    clientId: 'stable-client',
+    connectionId: 'new-socket',
+  })
+  await rejoinCommitStarted.promise
+  const staleDisconnect = game.leaveRoom({
+    roomCode,
+    playerId: 'player-1',
+    commandId: 'racing-stale-disconnect',
+    clientId: 'stable-client',
+    connectionId: 'old-socket',
+    disconnected: true,
+  })
+  releaseRejoinCommit.resolve()
+  await Promise.all([rejoin, staleDisconnect])
+  const savedRoom = await repository.getRoom(roomCode)
+
+  assert.equal(savedRoom.players[0].connected, true)
+  assert.equal(savedRoom.players[0].connectionId, 'new-socket')
+})
+
+test('el rejoin establece su heartbeat antes de que la reconciliación pueda desconectarlo', async (t) => {
+  const { repository, redis } = createGame(t)
+  const game = createGameCommandService({
+    repository,
+    redis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+    now: () => 1_000_000,
+  })
+  const roomCode = 'REJOIN'
+  const room = playableRoom(roomCode)
+  room.players[0].clientId = 'stable-client'
+  room.players[0].connectionId = 'old-socket'
+  room.players[0].connected = false
+  await repository.saveRoom(room)
+
+  const reconnected = await game.joinRoom({
+    roomCode,
+    playerName: 'Ana',
+    commandId: 'rejoin-with-heartbeat',
+    clientId: 'stable-client',
+    connectionId: 'new-socket',
+  })
+  const reconciliation = await game.reconcileExpiredPlayers(roomCode)
+  const recoveredRoom = await repository.getRoom(roomCode)
+  const serializedHeartbeat = await redis.get(`player:${roomCode}:player-1`)
+  const staleHeartbeat = await game.heartbeatPlayer({
+    roomCode,
+    playerId: 'player-1',
+    connectionId: 'old-socket',
+  })
+
+  assert.equal(reconnected.success, true)
+  assert.deepEqual(reconciliation.disconnectedPlayerIds, [])
+  assert.equal(recoveredRoom.players[0].connected, true)
+  assert.equal(staleHeartbeat.success, false)
+  assert.notEqual(serializedHeartbeat, null)
+  const heartbeat = JSON.parse(serializedHeartbeat)
+  assert.equal(heartbeat.connectionId, 'new-socket')
+})
+
+test('acepta durante la migración un heartbeat numérico todavía vigente', async (t) => {
+  const { repository, redis } = createGame(t)
+  const game = createGameCommandService({
+    repository,
+    redis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+  })
+  const roomCode = 'LEGACY'
+  const room = playableRoom(roomCode)
+  room.players[0].connectionId = 'current-socket'
+  await repository.saveRoom(room)
+  await redis.set(
+    `player:${roomCode}:player-1`,
+    '1000000',
+    'PX',
+    15_000,
+  )
+
+  const reconciliation = await game.reconcileExpiredPlayers(roomCode)
+  const savedRoom = await repository.getRoom(roomCode)
+
+  assert.deepEqual(reconciliation.disconnectedPlayerIds, [])
+  assert.equal(savedRoom.players[0].connected, true)
+})
+
+test('un heartbeat adopta atómicamente la primera generación de una sesión legada', async (t) => {
+  const { repository, redis } = createGame(t)
+  const game = createGameCommandService({
+    repository,
+    redis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+    now: () => 1_000_000,
+  })
+  const roomCode = 'ADOPT1'
+  await repository.saveRoom(playableRoom(roomCode))
+
+  const heartbeatResult = await game.heartbeatPlayer({
+    roomCode,
+    playerId: 'player-1',
+    connectionId: 'adopted-socket',
+  })
+  const savedRoom = await repository.getRoom(roomCode)
+  const savedHeartbeat = JSON.parse(
+    await redis.get(`player:${roomCode}:player-1`),
+  )
+
+  assert.equal(heartbeatResult.success, true)
+  assert.equal(savedRoom.players[0].connectionId, 'adopted-socket')
+  assert.equal(savedHeartbeat.connectionId, 'adopted-socket')
 })
 
 test('genera un commandId cuando el servicio recibe un comando sin identificador', async (t) => {
@@ -483,9 +641,9 @@ test('linealiza heartbeat y expiración para no revivir una key desconectada', a
   let lockCalls = 0
   const delayedRedis = new Proxy(redis, {
     get(target, property) {
-      if (property === 'exists') {
+      if (property === 'get') {
         return async (...argumentsList) => {
-          const result = await target.exists(...argumentsList)
+          const result = await target.get(...argumentsList)
           heartbeatChecked.resolve()
           await releaseReconciliation.promise
           return result
@@ -553,4 +711,43 @@ test('linealiza heartbeat y expiración para no revivir una key desconectada', a
   assert.equal(room.players[0].connected, false)
   assert.equal(heartbeatResult.success, false)
   assert.equal(await redis.exists(`player:${roomCode}:player-1`), 0)
+})
+
+test('no elimina el índice de heartbeats después de perder el lock', async (t) => {
+  const { repository, redis } = createGame(t)
+  const roomCode = 'INDEX1'
+  const room = playableRoom(roomCode)
+  room.players[0].connected = false
+  await repository.saveRoom(room)
+  await redis.sadd('player-heartbeat:rooms', roomCode)
+  const repositoryWithStolenLock = {
+    ...repository,
+    removeHeartbeatRoom: async (...argumentsList) => {
+      await redis.set(
+        `lock:room:${roomCode}`,
+        'new-owner',
+        'PX',
+        3000,
+      )
+      return repository.removeHeartbeatRoom(...argumentsList)
+    },
+  }
+  const game = createGameCommandService({
+    repository: repositoryWithStolenLock,
+    redis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+    now: () => 1_000_000,
+  })
+
+  await assert.rejects(
+    game.reconcileExpiredPlayers(roomCode),
+    (error) => error.code === 'LOCK_LOST',
+  )
+  assert.equal(
+    await redis.sismember('player-heartbeat:rooms', roomCode),
+    1,
+  )
 })

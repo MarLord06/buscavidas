@@ -134,6 +134,45 @@ function createGameCommandService({
     return keyFor(`player:${roomCode}:${playerId}`)
   }
 
+  function playerHeartbeatValue(connectionId) {
+    return JSON.stringify({
+      connectionId: connectionId ?? null,
+      timestamp: now(),
+    })
+  }
+
+  function playerHeartbeat(roomCode, player) {
+    return {
+      key: playerHeartbeatKey(roomCode, player.id),
+      roomsKey: keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
+      roomCode,
+      value: playerHeartbeatValue(player.connectionId),
+      ttlMilliseconds: PLAYER_HEARTBEAT_TTL_MILLISECONDS,
+    }
+  }
+
+  function heartbeatBelongsToPlayer(serializedHeartbeat, player) {
+    if (!serializedHeartbeat) {
+      return false
+    }
+
+    try {
+      const heartbeat = JSON.parse(serializedHeartbeat)
+
+      if (typeof heartbeat === 'number' && Number.isFinite(heartbeat)) {
+        return true
+      }
+
+      return (
+        heartbeat &&
+        typeof heartbeat === 'object' &&
+        (heartbeat.connectionId ?? null) === (player.connectionId ?? null)
+      )
+    } catch {
+      return false
+    }
+  }
+
   function normalizeCommand(command = {}) {
     return {
       ...command,
@@ -210,12 +249,22 @@ function createGameCommandService({
       )
 
       if (transitionResult.mutated) {
-        await repository.saveRoomAndCommand(
-          room,
-          command.commandId,
-          result,
-          lock,
-        )
+        if (transitionResult.heartbeat) {
+          await repository.saveRoomCommandAndPlayerHeartbeat(
+            room,
+            command.commandId,
+            result,
+            transitionResult.heartbeat,
+            lock,
+          )
+        } else {
+          await repository.saveRoomAndCommand(
+            room,
+            command.commandId,
+            result,
+            lock,
+          )
+        }
         await publishRoomUpdated(getPublicRoom(room), {
           roomCode: room.roomCode,
           stateVersion: room.stateVersion,
@@ -376,6 +425,9 @@ function createGameCommandService({
         return {
           mutated:
             !wasConnected || previousConnectionId !== command.connectionId,
+          heartbeat: redis
+            ? playerHeartbeat(normalizedCommand.roomCode, existingPlayer)
+            : null,
           result: {
             success: true,
             roomCode: normalizedCommand.roomCode,
@@ -437,6 +489,9 @@ function createGameCommandService({
 
       return {
         mutated: true,
+        heartbeat: redis
+          ? playerHeartbeat(normalizedCommand.roomCode, player)
+          : null,
         result: {
           success: true,
           roomCode: normalizedCommand.roomCode,
@@ -661,7 +716,6 @@ function createGameCommandService({
 
       if (
         command.disconnected &&
-        command.connectionId &&
         room.players[playerIndex].connectionId !== command.connectionId
       ) {
         return { mutated: false, result: { success: true } }
@@ -706,11 +760,33 @@ function createGameCommandService({
         return resultWithMetadata(command, room, { success: false })
       }
 
+      if (player.connectionId == null && command.connectionId != null) {
+        player.connectionId = command.connectionId
+        advanceRoom(room, command)
+        const result = resultWithMetadata(command, room, { success: true })
+        await repository.saveRoomAndPlayerHeartbeat(
+          room,
+          playerHeartbeat(command.roomCode, player),
+          lock,
+        )
+        await publishRoomUpdated(getPublicRoom(room), {
+          roomCode: room.roomCode,
+          stateVersion: room.stateVersion,
+          lamportClock: room.lamportClock,
+          deleted: Boolean(room.deleted),
+        })
+        return result
+      }
+
+      if (player.connectionId !== command.connectionId) {
+        return resultWithMetadata(command, room, { success: false })
+      }
+
       await repository.savePlayerHeartbeat(
         playerHeartbeatKey(command.roomCode, command.playerId),
         keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
         command.roomCode,
-        String(now()),
+        playerHeartbeatValue(command.connectionId),
         PLAYER_HEARTBEAT_TTL_MILLISECONDS,
         lock,
       )
@@ -737,7 +813,11 @@ function createGameCommandService({
 
       if (!room || room.deleted || !redis) {
         if (redis) {
-          await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+          await repository.removeHeartbeatRoom(
+            keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
+            roomCode,
+            lock,
+          )
         }
 
         return resultWithMetadata(command, room, {
@@ -751,7 +831,11 @@ function createGameCommandService({
       )
 
       if (connectedPlayers.length === 0) {
-        await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+        await repository.removeHeartbeatRoom(
+          keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
+          roomCode,
+          lock,
+        )
 
         return resultWithMetadata(command, room, {
           success: true,
@@ -762,9 +846,10 @@ function createGameCommandService({
       const heartbeatStates = await Promise.all(
         connectedPlayers.map(async (player) => ({
           player,
-          alive: Boolean(await redis.exists(
-            playerHeartbeatKey(roomCode, player.id),
-          )),
+          alive: heartbeatBelongsToPlayer(
+            await redis.get(playerHeartbeatKey(roomCode, player.id)),
+            player,
+          ),
         })),
       )
       const expiredPlayers = heartbeatStates
@@ -802,7 +887,11 @@ function createGameCommandService({
       })
 
       if (!room.players.some((player) => player.connected)) {
-        await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+        await repository.removeHeartbeatRoom(
+          keyFor(PLAYER_HEARTBEAT_ROOMS_KEY),
+          roomCode,
+          lock,
+        )
       }
 
       return resultWithMetadata(command, room, {
