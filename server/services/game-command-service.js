@@ -2,6 +2,8 @@ const { randomUUID } = require('node:crypto')
 
 const ROOM_CODE_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const PLAYER_COLORS = ['#8b5cf6', '#22c55e', '#ef4444']
+const PLAYER_HEARTBEAT_TTL_MILLISECONDS = 15_000
+const PLAYER_HEARTBEAT_ROOMS_KEY = 'player-heartbeat:rooms'
 
 function createBoard(rows, columns, mines, now) {
   const totalCells = rows * columns
@@ -107,9 +109,21 @@ function getPublicRoom(room) {
 function createGameCommandService({
   repository,
   coordinator,
+  redis,
+  keyPrefix = '',
   now = Date.now,
   publishRoomUpdated = async () => {},
 }) {
+  function keyFor(logicalKey) {
+    return redis?.options?.keyPrefix
+      ? logicalKey
+      : `${keyPrefix}${logicalKey}`
+  }
+
+  function playerHeartbeatKey(roomCode, playerId) {
+    return keyFor(`player:${roomCode}:${playerId}`)
+  }
+
   function normalizeCommand(command = {}) {
     return {
       ...command,
@@ -639,9 +653,140 @@ function createGameCommandService({
       return redirect
     }
 
-    const room = await repository.getRoom(command.roomCode)
+    return repository.withRoomLock(command.roomCode, async () => {
+      const room = await repository.getRoom(command.roomCode)
+      const player = room?.players.find(
+        (currentPlayer) => currentPlayer.id === command.playerId,
+      )
 
-    return resultWithMetadata(command, room, { success: Boolean(room) })
+      if (!player?.connected || !redis) {
+        return resultWithMetadata(command, room, { success: false })
+      }
+
+      const transactionResults = await redis
+        .multi()
+        .set(
+          playerHeartbeatKey(command.roomCode, command.playerId),
+          String(now()),
+          'PX',
+          PLAYER_HEARTBEAT_TTL_MILLISECONDS,
+        )
+        .sadd(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), command.roomCode)
+        .exec()
+      const failedCommand = transactionResults.find(([error]) => error)
+
+      if (failedCommand) {
+        throw failedCommand[0]
+      }
+
+      return resultWithMetadata(command, room, { success: true })
+    })
+  }
+
+  async function reconcileExpiredPlayers(roomCode) {
+    const command = normalizeCommand({
+      roomCode,
+      commandId: `reconcile-expired:${randomUUID()}`,
+      lamportClock: 0,
+    })
+
+    const redirect = await leaderRedirect()
+
+    if (redirect) {
+      return redirect
+    }
+
+    return repository.withRoomLock(roomCode, async () => {
+      const room = await repository.getRoom(roomCode)
+
+      if (!room || room.deleted || !redis) {
+        if (redis) {
+          await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+        }
+
+        return resultWithMetadata(command, room, {
+          success: Boolean(room && !room.deleted),
+          disconnectedPlayerIds: [],
+        })
+      }
+
+      const connectedPlayers = room.players.filter(
+        (player) => player.connected,
+      )
+
+      if (connectedPlayers.length === 0) {
+        await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+
+        return resultWithMetadata(command, room, {
+          success: true,
+          disconnectedPlayerIds: [],
+        })
+      }
+
+      const heartbeatStates = await Promise.all(
+        connectedPlayers.map(async (player) => ({
+          player,
+          alive: Boolean(await redis.exists(
+            playerHeartbeatKey(roomCode, player.id),
+          )),
+        })),
+      )
+      const expiredPlayers = heartbeatStates
+        .filter(({ alive }) => !alive)
+        .map(({ player }) => player)
+
+      if (expiredPlayers.length === 0) {
+        return resultWithMetadata(command, room, {
+          success: true,
+          disconnectedPlayerIds: [],
+        })
+      }
+
+      for (const player of expiredPlayers) {
+        player.connected = false
+      }
+
+      const host = room.players.find((player) => player.id === room.hostId)
+
+      if (!host?.connected) {
+        const newHost = room.players.find((player) => player.connected)
+
+        if (newHost) {
+          room.hostId = newHost.id
+        }
+      }
+
+      advanceRoom(room, command)
+      await repository.saveRoom(room)
+      await publishRoomUpdated(getPublicRoom(room))
+
+      if (!room.players.some((player) => player.connected)) {
+        await redis.srem(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY), roomCode)
+      }
+
+      return resultWithMetadata(command, room, {
+        success: true,
+        disconnectedPlayerIds: expiredPlayers.map((player) => player.id),
+      })
+    })
+  }
+
+  async function listRoomCodes() {
+    if (!redis) {
+      return []
+    }
+
+    return redis.smembers(keyFor(PLAYER_HEARTBEAT_ROOMS_KEY))
+  }
+
+  async function reconcileExpiredPlayersInRooms() {
+    if (!coordinator.isLeader()) {
+      return []
+    }
+
+    const roomCodes = await listRoomCodes()
+
+    return Promise.all(roomCodes.map(reconcileExpiredPlayers))
   }
 
   async function getRoomState(roomCode) {
@@ -656,6 +801,8 @@ function createGameCommandService({
     restartGame: (command) => restartGame(normalizeCommand(command)),
     leaveRoom: (command) => leaveRoom(normalizeCommand(command)),
     heartbeatPlayer: (command) => heartbeatPlayer(normalizeCommand(command)),
+    reconcileExpiredPlayers,
+    reconcileExpiredPlayersInRooms,
     getRoomState,
   }
 }

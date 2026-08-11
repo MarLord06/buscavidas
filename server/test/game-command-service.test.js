@@ -41,7 +41,16 @@ function createGame(t, coordinator = {
     await redis.quit()
   })
 
-  return { game, repository }
+  return { game, repository, redis }
+}
+
+function createDeferred() {
+  let resolve
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise
+  })
+
+  return { promise, resolve }
 }
 
 function playableRoom(roomCode = 'PLAY01') {
@@ -365,4 +374,87 @@ test('un nodo no líder redirige sin crear la sala', async (t) => {
     leader,
   })
   assert.equal(await repository.getRoom(result.roomCode), null)
+})
+
+test('linealiza heartbeat y expiración para no revivir una key desconectada', async (t) => {
+  const { repository, redis } = createGame(t)
+  const roomCode = 'RACE01'
+  await repository.saveRoom(playableRoom(roomCode))
+  const heartbeatChecked = createDeferred()
+  const releaseReconciliation = createDeferred()
+  const heartbeatWriteStarted = createDeferred()
+  const heartbeatLockRequested = createDeferred()
+  let lockCalls = 0
+  const delayedRedis = new Proxy(redis, {
+    get(target, property) {
+      if (property === 'exists') {
+        return async (...argumentsList) => {
+          const result = await target.exists(...argumentsList)
+          heartbeatChecked.resolve()
+          await releaseReconciliation.promise
+          return result
+        }
+      }
+
+      if (property === 'set') {
+        return async (...argumentsList) => {
+          heartbeatWriteStarted.resolve()
+          return target.set(...argumentsList)
+        }
+      }
+
+      if (property === 'multi') {
+        return (...argumentsList) => {
+          heartbeatWriteStarted.resolve()
+          return target.multi(...argumentsList)
+        }
+      }
+
+      const value = target[property]
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const instrumentedRepository = {
+    ...repository,
+    withRoomLock: (...argumentsList) => {
+      lockCalls += 1
+
+      if (lockCalls === 2) {
+        heartbeatLockRequested.resolve()
+      }
+
+      return repository.withRoomLock(...argumentsList)
+    },
+  }
+  const game = createGameCommandService({
+    repository: instrumentedRepository,
+    redis: delayedRedis,
+    coordinator: {
+      isLeader: () => true,
+      getLeader: async () => null,
+    },
+    now: () => 1_000_000,
+  })
+
+  const reconciliation = game.reconcileExpiredPlayers(roomCode)
+  await heartbeatChecked.promise
+  const heartbeat = game.heartbeatPlayer({
+    roomCode,
+    playerId: 'player-1',
+  })
+  await Promise.race([
+    heartbeatWriteStarted.promise,
+    heartbeatLockRequested.promise,
+  ])
+  releaseReconciliation.resolve()
+  const [reconciliationResult, heartbeatResult] = await Promise.all([
+    reconciliation,
+    heartbeat,
+  ])
+  const room = await repository.getRoom(roomCode)
+
+  assert.equal(reconciliationResult.success, true)
+  assert.equal(room.players[0].connected, false)
+  assert.equal(heartbeatResult.success, false)
+  assert.equal(await redis.exists(`player:${roomCode}:player-1`), 0)
 })

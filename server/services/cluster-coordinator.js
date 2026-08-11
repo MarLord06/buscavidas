@@ -1,3 +1,5 @@
+const { EventEmitter } = require('node:events')
+
 const HEARTBEAT_TTL_MS = 6000
 const ELECTION_INTERVAL_MS = 2000
 
@@ -54,6 +56,7 @@ function createClusterCoordinator({
   let started = false
   let leader = false
   let tickQueue = Promise.resolve()
+  const events = new EventEmitter()
 
   function now() {
     return clock.now()
@@ -144,6 +147,7 @@ function createClusterCoordinator({
       return
     }
 
+    const previousLeader = await getLeader()
     const candidate = JSON.stringify({
       nodeId,
       publicUrl,
@@ -159,7 +163,13 @@ function createClusterCoordinator({
       now(),
     )
 
+    const becameLeader =
+      acquired === 1 && previousLeader?.nodeId !== nodeId
     leader = acquired === 1
+
+    if (becameLeader) {
+      events.emit('leader-changed', await getLeader())
+    }
   }
 
   function enqueueTick(operation) {
@@ -203,7 +213,17 @@ function createClusterCoordinator({
     await redis.eval(RELEASE_LEADER, 1, leaderKey, nodeId, token)
   }
 
-  return { start, stop, tick, isLeader: () => leader, getLeader, getNodes }
+  return {
+    start,
+    stop,
+    tick,
+    isLeader: () => leader,
+    getLeader,
+    getNodes,
+    on: events.on.bind(events),
+    off: events.off.bind(events),
+    once: events.once.bind(events),
+  }
 }
 
 module.exports = { createClusterCoordinator }

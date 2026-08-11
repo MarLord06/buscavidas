@@ -47,6 +47,10 @@ function attachSocketHandlers({ io, game }) {
         socket.data.roomCode = result.roomCode
         socket.data.playerId = socket.id
         socket.data.role = 'player'
+        await game.heartbeatPlayer({
+          roomCode: result.roomCode,
+          playerId: socket.id,
+        })
         console.log(`${result.player.name} creó la sala ${result.roomCode}`)
       }
 
@@ -69,6 +73,10 @@ function attachSocketHandlers({ io, game }) {
         socket.data.roomCode = result.roomCode
         socket.data.playerId = socket.id
         socket.data.role = 'player'
+        await game.heartbeatPlayer({
+          roomCode: result.roomCode,
+          playerId: socket.id,
+        })
         console.log(
           `${result.player.name} ${
             result.reconnected ? 'se reconectó a' : 'ingresó a'

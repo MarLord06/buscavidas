@@ -14,6 +14,7 @@ const {
 const { attachSocketHandlers } = require('./services/socket-handlers')
 
 let standaloneServerCount = 0
+const PLAYER_RECONCILIATION_INTERVAL_MILLISECONDS = 5000
 
 function createGameServer(options = {}) {
   const config = options.config || {}
@@ -65,10 +66,55 @@ function createGameServer(options = {}) {
   const game = createGameCommandService({
     repository,
     coordinator,
+    redis: publisher,
+    keyPrefix: config.keyPrefix,
     publishRoomUpdated: async (room) => {
       io.to(room.roomCode).emit('room-updated', room)
     },
   })
+  let reconciliationTimer = null
+  let reconciliationQueue = Promise.resolve()
+
+  function reconcileRooms() {
+    if (!coordinator.isLeader()) {
+      stopReconciliation()
+      return Promise.resolve([])
+    }
+
+    const reconciliation = reconciliationQueue.then(() =>
+      game.reconcileExpiredPlayersInRooms(),
+    )
+    reconciliationQueue = reconciliation.catch((error) => {
+      console.error('No se pudieron reconciliar jugadores expirados', error)
+    })
+
+    return reconciliation
+  }
+
+  function stopReconciliation() {
+    if (reconciliationTimer) {
+      clearInterval(reconciliationTimer)
+      reconciliationTimer = null
+    }
+  }
+
+  function scheduleReconciliation() {
+    stopReconciliation()
+    reconcileRooms().catch(() => {})
+    reconciliationTimer = setInterval(() => {
+      reconcileRooms().catch(() => {})
+    }, PLAYER_RECONCILIATION_INTERVAL_MILLISECONDS)
+  }
+
+  function handleLeaderChanged(leader) {
+    io.emit('leader-changed', leader)
+
+    if (coordinator.isLeader()) {
+      scheduleReconciliation()
+    } else {
+      stopReconciliation()
+    }
+  }
 
   app.use(cors({ origin: clientUrl }))
   app.use(express.json())
@@ -81,6 +127,11 @@ function createGameServer(options = {}) {
 
   io.adapter(createAdapter(publisher, subscriber))
   const socketHandlers = attachSocketHandlers({ io, game })
+  coordinator.on?.('leader-changed', handleLeaderChanged)
+
+  if (coordinator.isLeader()) {
+    scheduleReconciliation()
+  }
 
   function listen(port = 0) {
     return new Promise((resolve, reject) => {
@@ -94,6 +145,8 @@ function createGameServer(options = {}) {
   }
 
   async function close() {
+    stopReconciliation()
+    coordinator.off?.('leader-changed', handleLeaderChanged)
     await new Promise((resolve, reject) => {
       io.close((error) => {
         if (error) {
@@ -105,6 +158,7 @@ function createGameServer(options = {}) {
       })
     })
     await socketHandlers.waitForPendingDisconnects()
+    await reconciliationQueue
 
     const clientsToClose = []
 

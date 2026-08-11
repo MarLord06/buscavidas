@@ -243,3 +243,129 @@ test('difunde el mismo estado de sala entre dos nodos', async (t) => {
   assert.equal(followerRoom.stateVersion, leaderRoom.stateVersion);
   assert.deepEqual(followerRoom.game.cells, leaderRoom.game.cells);
 });
+
+test('renueva por quince segundos el heartbeat del jugador conectado', async (t) => {
+  const keyPrefix = `buscaminas:test:player-heartbeat:${Date.now()}:${process.pid}:`;
+  const redis = new Redis({
+    host: '127.0.0.1',
+    port: 6379,
+    keyPrefix,
+  });
+  const gameServer = createGameServer({
+    config: { clientUrl: '*' },
+    redis,
+  });
+  const port = await gameServer.listen(0);
+  const host = await connect(`http://127.0.0.1:${port}`);
+
+  t.after(async () => {
+    host.close();
+    await gameServer.close();
+    const keys = await redis.keys('*');
+
+    if (keys.length > 0) {
+      await redis.del(...keys.map((key) => key.slice(keyPrefix.length)));
+    }
+
+    await redis.quit();
+  });
+
+  const created = await emitWithAck(host, 'create-room', {
+    playerName: 'Ana',
+  });
+  const heartbeat = await emitWithAck(host, 'player-heartbeat', {});
+  const ttl = await redis.pttl(
+    `player:${created.roomCode}:${created.player.id}`,
+  );
+
+  assert.equal(heartbeat.success, true);
+  assert.ok(ttl > 14_000 && ttl <= 15_000, `TTL inesperado: ${ttl}`);
+
+  const room = await gameServer.repository.getRoom(created.roomCode);
+  room.status = 'playing';
+  await gameServer.repository.saveRoom(room);
+});
+
+test('reconcilia jugadores expirados y reasigna el anfitrión desde Redis', async (t) => {
+  const keyPrefix = `buscaminas:test:player-expiry:${Date.now()}:${process.pid}:`;
+  const redis = new Redis({
+    host: '127.0.0.1',
+    port: 6379,
+    keyPrefix,
+  });
+  const gameServer = createGameServer({
+    config: { clientUrl: '*' },
+    redis,
+  });
+  const port = await gameServer.listen(0);
+  const url = `http://127.0.0.1:${port}`;
+  const host = await connect(url);
+  const secondPlayer = await connect(url);
+  const thirdPlayer = await connect(url);
+
+  await gameServer.repository.saveRoom({
+    roomCode: 'NOHB01',
+    status: 'playing',
+    hostId: 'ghost-player',
+    players: [{
+      id: 'ghost-player',
+      name: 'Fantasma',
+      score: 0,
+      ready: false,
+      connected: true,
+      color: '#8b5cf6',
+    }],
+    game: null,
+    createdAt: 800_000,
+    lamportClock: 0,
+    stateVersion: 1,
+  });
+
+  t.after(async () => {
+    host.close();
+    secondPlayer.close();
+    thirdPlayer.close();
+    await gameServer.close();
+    const keys = await redis.keys('*');
+
+    if (keys.length > 0) {
+      await redis.del(...keys.map((key) => key.slice(keyPrefix.length)));
+    }
+
+    await redis.quit();
+  });
+
+  const created = await emitWithAck(host, 'create-room', {
+    playerName: 'Ana',
+  });
+  const secondJoined = await emitWithAck(secondPlayer, 'join-room', {
+    playerName: 'Beto',
+    roomCode: created.roomCode,
+  });
+  await emitWithAck(thirdPlayer, 'join-room', {
+    playerName: 'Caro',
+    roomCode: created.roomCode,
+  });
+  await Promise.all([
+    emitWithAck(host, 'player-heartbeat', {}),
+    emitWithAck(secondPlayer, 'player-heartbeat', {}),
+    emitWithAck(thirdPlayer, 'player-heartbeat', {}),
+  ]);
+  await emitWithAck(host, 'start-game');
+  await redis.del(`player:${created.roomCode}:${created.player.id}`);
+
+  const results = await gameServer.game.reconcileExpiredPlayersInRooms();
+  const room = await gameServer.repository.getRoom(created.roomCode);
+  const roomWithoutHeartbeat = await gameServer.repository.getRoom('NOHB01');
+  const reconciliationCommands = await redis.keys(
+    `${keyPrefix}room:${created.roomCode}:command:reconcile-expired:*`,
+  );
+
+  assert.ok(results.some((result) => result.success));
+  assert.equal(room.players[0].connected, false);
+  assert.equal(room.hostId, secondJoined.player.id);
+  assert.equal(room.stateVersion, 5);
+  assert.equal(roomWithoutHeartbeat.players[0].connected, true);
+  assert.equal(roomWithoutHeartbeat.stateVersion, 1);
+  assert.deepEqual(reconciliationCommands, []);
+});
