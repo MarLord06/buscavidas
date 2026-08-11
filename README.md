@@ -216,11 +216,11 @@ El repositorio contiene un `Jenkinsfile` declarativo para ejecutar la
 validación completa desde Jenkins LTS local. SonarQube permanece en
 `http://localhost:9000`.
 
-Antes de crear el job, en Jenkins se deben instalar los plugins **Pipeline**,
-**NodeJS** y **SonarQube Scanner**. En **Manage Jenkins → Tools**, registra una
-instalación NodeJS con el nombre exacto `NodeJS-22`. En **Manage Jenkins →
-System → SonarQube servers**, registra el servidor con el nombre exacto
-`SonarQube` y la URL `http://localhost:9000`.
+Antes de crear el job, en Jenkins se deben instalar los plugins **Pipeline** y
+**SonarQube Scanner**. El pipeline usa el Node.js instalado por Homebrew en
+`/opt/homebrew/bin`, evitando descargas de herramientas durante cada primer
+build. En **Manage Jenkins → System → SonarQube servers**, registra el
+servidor con el nombre exacto `SonarQube` y la URL `http://localhost:9000`.
 
 Genera un token de análisis en SonarQube y guárdalo en **Manage Jenkins →
 Credentials** como credencial de tipo **Secret text** con el ID exacto

@@ -1,8 +1,8 @@
 pipeline {
   agent any
 
-  tools {
-    nodejs 'NodeJS-22'
+  environment {
+    PATH+HOMEBREW = '/opt/homebrew/bin'
   }
 
   options {
@@ -14,6 +14,7 @@ pipeline {
     stage('Install') {
       steps {
         sh 'node --version'
+        sh 'npm --version'
         sh 'npm ci'
         sh 'npm --prefix server ci'
         sh 'npm --prefix client ci'
