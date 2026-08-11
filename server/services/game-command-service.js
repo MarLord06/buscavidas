@@ -177,6 +177,28 @@ function finishIfOneEligiblePlayer(room, currentTime) {
   return true
 }
 
+function finishGameWithHighestScore(room, currentTime) {
+  const highestScore = Math.max(
+    ...room.players.map((player) => player.score),
+  )
+  const winnerIds = room.players
+    .filter((player) => player.score === highestScore)
+    .map((player) => player.id)
+
+  finishGame(room, winnerIds, currentTime)
+}
+
+function progressAfterReveal(room, cell, currentTime) {
+  if (room.game.revealedSafeCells >= room.game.totalSafeCells) {
+    finishGameWithHighestScore(room, currentTime)
+    return
+  }
+
+  if (room.game.currentTurnPlayerId) {
+    advanceTurnOrFinish(room, currentTime, cell.isMine)
+  }
+}
+
 function getPublicPlayer(player) {
   return Object.fromEntries(
     Object.entries(player).filter(([key]) =>
@@ -738,18 +760,7 @@ function createGameCommandService({
         message = `Casilla segura: ${cell.nearbyMines} minas cercanas.`
       }
 
-      if (room.game.revealedSafeCells >= room.game.totalSafeCells) {
-        const highestScore = Math.max(
-          ...room.players.map((currentPlayer) => currentPlayer.score),
-        )
-        finishGame(room, room.players
-          .filter((currentPlayer) => currentPlayer.score === highestScore)
-          .map((currentPlayer) => currentPlayer.id), now())
-      } else {
-        if (room.game.currentTurnPlayerId) {
-          advanceTurnOrFinish(room, now(), cell.isMine)
-        }
-      }
+      progressAfterReveal(room, cell, now())
 
       return {
         mutated: true,
@@ -794,7 +805,7 @@ function createGameCommandService({
         return { mutated: false, result: { success: false, message: 'La casilla no admite banderas' } }
       }
 
-      cell.flaggedBy = cell.flaggedBy || []
+      cell.flaggedBy ??= []
       const flagIndex = cell.flaggedBy.indexOf(command.playerId)
       const flagged = flagIndex === -1
 
@@ -1113,7 +1124,7 @@ function createGameCommandService({
     }, async (currentRoom) => {
       if (
         currentRoom?.status !== 'playing' ||
-        currentRoom.game?.turnExpiresAt !== expiresAt ||
+        currentRoom?.game?.turnExpiresAt !== expiresAt ||
         now() < expiresAt
       ) {
         return { mutated: false, result: { success: false } }
