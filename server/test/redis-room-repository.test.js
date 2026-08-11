@@ -26,6 +26,7 @@ function createRepository(t) {
       'room:LOCK01',
       'room:LOCK01:command:cmd-1',
       'room:LOCK01:command:cmd-ttl',
+      'room:LOCK01:command:cmd-atomic',
       'lock:room:LOCK01',
     )
     await redis.quit()
@@ -185,4 +186,26 @@ test('conserva los resultados de comandos durante una hora', async (t) => {
   const ttl = await redis.ttl('room:LOCK01:command:cmd-ttl')
 
   assert.equal(ttl > 0 && ttl <= 3600, true)
+})
+
+test('guarda la sala y el resultado del comando en una sola transacción', async (t) => {
+  const { repository } = createRepository(t)
+  const room = {
+    roomCode: 'LOCK01',
+    stateVersion: 2,
+    players: [{ id: 'player-1', score: 1 }],
+  }
+  const result = {
+    success: true,
+    commandId: 'cmd-atomic',
+    stateVersion: 2,
+  }
+
+  await repository.saveRoomAndCommand(room, 'cmd-atomic', result)
+
+  assert.deepEqual(await repository.getRoom('LOCK01'), room)
+  assert.deepEqual(
+    await repository.getCommand('LOCK01', 'cmd-atomic'),
+    result,
+  )
 })

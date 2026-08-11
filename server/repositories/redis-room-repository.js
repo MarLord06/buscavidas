@@ -117,12 +117,31 @@ function createRedisRoomRepository({
     )
   }
 
+  async function saveRoomAndCommand(room, commandId, result) {
+    const transactionResults = await redis
+      .multi()
+      .set(roomKey(room.roomCode), JSON.stringify(room))
+      .set(
+        commandKey(room.roomCode, commandId),
+        JSON.stringify(result),
+        'EX',
+        COMMAND_TTL_SECONDS,
+      )
+      .exec()
+    const failedCommand = transactionResults.find(([error]) => error)
+
+    if (failedCommand) {
+      throw failedCommand[0]
+    }
+  }
+
   return {
     getRoom,
     saveRoom,
     withRoomLock,
     getCommand,
     saveCommand,
+    saveRoomAndCommand,
   }
 }
 

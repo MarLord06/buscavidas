@@ -1,8 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const Redis = require('ioredis');
 const { io: createClient } = require('socket.io-client');
 
 const { createGameServer } = require('../app');
+const {
+  createClusterCoordinator,
+} = require('../services/cluster-coordinator');
 
 function connect(url) {
   return new Promise((resolve, reject) => {
@@ -111,4 +115,131 @@ test('crea una sala, admite tres jugadores e inicia una partida', async (t) => {
   assert.equal(joinedAsSpectator.success, true);
   assert.equal(spectatorReveal.success, false);
   assert.equal(spectatorReveal.message, 'El jugador no está conectado');
+});
+
+test('difunde el mismo estado de sala entre dos nodos', async (t) => {
+  const keyPrefix = `buscaminas:test:game-server:${Date.now()}:${process.pid}:`;
+  const firstRedis = new Redis({
+    host: '127.0.0.1',
+    port: 6379,
+    keyPrefix,
+  });
+  const thirdRedis = new Redis({
+    host: '127.0.0.1',
+    port: 6379,
+    keyPrefix,
+  });
+  const firstCoordinator = createClusterCoordinator({
+    redis: firstRedis,
+    nodeId: 1,
+    publicUrl: 'http://node-1',
+  });
+  const thirdCoordinator = createClusterCoordinator({
+    redis: thirdRedis,
+    nodeId: 3,
+    publicUrl: 'http://node-3',
+  });
+
+  await firstCoordinator.start();
+  await thirdCoordinator.start();
+
+  const firstServer = createGameServer({
+    config: { clientUrl: '*', nodeId: 1 },
+    redis: firstRedis,
+    coordinator: firstCoordinator,
+  });
+  const thirdServer = createGameServer({
+    config: { clientUrl: '*', nodeId: 3 },
+    redis: thirdRedis,
+    coordinator: thirdCoordinator,
+  });
+  const firstPort = await firstServer.listen(0);
+  const thirdPort = await thirdServer.listen(0);
+  const followerClient = await connect(`http://127.0.0.1:${firstPort}`);
+  const host = await connect(`http://127.0.0.1:${thirdPort}`);
+  const secondPlayer = await connect(`http://127.0.0.1:${thirdPort}`);
+  const thirdPlayer = await connect(`http://127.0.0.1:${thirdPort}`);
+
+  t.after(async () => {
+    followerClient.close();
+    host.close();
+    secondPlayer.close();
+    thirdPlayer.close();
+    await Promise.all([firstServer.close(), thirdServer.close()]);
+    await Promise.all([firstCoordinator.stop(), thirdCoordinator.stop()]);
+    const keys = await firstRedis.keys('*');
+
+    if (keys.length > 0) {
+      await firstRedis.del(
+        ...keys.map((key) => key.slice(keyPrefix.length)),
+      );
+    }
+
+    await Promise.all([firstRedis.quit(), thirdRedis.quit()]);
+  });
+
+  assert.equal(thirdCoordinator.isLeader(), true);
+
+  const created = await emitWithAck(host, 'create-room', {
+    playerName: 'Ana',
+    commandId: 'create',
+    clientId: 'host-client',
+    lamportClock: 1,
+  });
+  const spectatorJoined = await emitWithAck(
+    followerClient,
+    'join-as-spectator',
+    { roomCode: created.roomCode },
+  );
+
+  assert.equal(created.success, true);
+  assert.equal(spectatorJoined.success, true);
+
+  const redirected = await emitWithAck(followerClient, 'reveal-cell', {
+    cellIndex: 0,
+    commandId: 'follower-command',
+    clientId: 'follower-client',
+    lamportClock: 2,
+  });
+
+  assert.equal(redirected.success, false);
+  assert.equal(redirected.code, 'LEADER_REDIRECT');
+  assert.equal(redirected.leader.nodeId, 3);
+
+  await emitWithAck(secondPlayer, 'join-room', {
+    roomCode: created.roomCode,
+    playerName: 'Beto',
+    commandId: 'join-2',
+    clientId: 'second-client',
+    lamportClock: 2,
+  });
+  await emitWithAck(thirdPlayer, 'join-room', {
+    roomCode: created.roomCode,
+    playerName: 'Caro',
+    commandId: 'join-3',
+    clientId: 'third-client',
+    lamportClock: 3,
+  });
+
+  const leaderUpdate = nextRoomUpdate(
+    host,
+    (room) => room.status === 'playing',
+  );
+  const followerUpdate = nextRoomUpdate(
+    followerClient,
+    (room) => room.status === 'playing',
+  );
+  const started = await emitWithAck(host, 'start-game', {
+    commandId: 'start',
+    clientId: 'host-client',
+    lamportClock: 4,
+  });
+  const [leaderRoom, followerRoom] = await Promise.all([
+    leaderUpdate,
+    followerUpdate,
+  ]);
+
+  assert.equal(started.success, true);
+  assert.equal(followerRoom.stateVersion, leaderRoom.stateVersion);
+  assert.deepEqual(followerRoom.game.cells, leaderRoom.game.cells);
 });

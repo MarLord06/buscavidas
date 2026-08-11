@@ -12,7 +12,11 @@ async function startServer() {
     nodeId: config.nodeId,
     publicUrl: config.publicUrl,
   })
-  const gameServer = createGameServer({ clientUrl })
+  const gameServer = createGameServer({
+    config: { ...config, clientUrl },
+    redis: { command, subscriber },
+    coordinator,
+  })
 
   try {
     await coordinator.start()
