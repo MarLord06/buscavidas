@@ -213,9 +213,9 @@ versiones, heartbeats, failover, QR/dashboard y el límite de Redis.
 ## Integración continua con Jenkins
 
 El repositorio contiene un `Jenkinsfile` declarativo para ejecutar la
-validación completa desde Jenkins LTS local. El controlador se instala de forma
-nativa y se abre en `http://localhost:8080`; SonarQube permanece en
-`http://localhost:9000`.
+validación completa desde Jenkins LTS local. SonarQube permanece en
+`http://localhost:9000`. Para recibir el webhook, Jenkins debe estar accesible
+desde una dirección LAN, no solamente mediante `127.0.0.1`.
 
 Antes de crear el job, en Jenkins se deben instalar los plugins **Pipeline**,
 **NodeJS** y **SonarQube Scanner**. En **Manage Jenkins → Tools**, registra una
@@ -228,13 +228,18 @@ Credentials** como credencial de tipo **Secret text** con el ID exacto
 `sonarqube-token`. El token no debe copiarse al repositorio, al Jenkinsfile ni
 a las capturas.
 
-Para que la etapa **Quality Gate** termine automáticamente, registra en
-SonarQube el webhook siguiente desde **Administration → Configuration →
+Para que la etapa **Quality Gate** termine automáticamente, identifica la IP
+LAN de la máquina que ejecuta Jenkins con `ipconfig getifaddr en0` y registra
+en SonarQube el webhook siguiente desde **Administration → Configuration →
 Webhooks**:
 
 ```text
-http://127.0.0.1:8080/sonarqube-webhook/
+http://<IP_LAN>:8080/sonarqube-webhook/
 ```
+
+Por ejemplo, si la IP LAN es `192.168.0.16`, la URL será
+`http://192.168.0.16:8080/sonarqube-webhook/`. SonarQube rechaza direcciones
+loopback como `127.0.0.1` para webhooks.
 
 Después crea un elemento **Pipeline** llamado `buscaminas-tripartito`, elige
 **Pipeline script from SCM**, selecciona el repositorio Git y usa `Jenkinsfile`
