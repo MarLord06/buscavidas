@@ -27,54 +27,66 @@ function latestRoom(currentRoom, incomingRoom) {
   return incomingVersion >= currentVersion ? incomingRoom : currentRoom
 }
 
+function updateClusterStatus(currentStatus, clusterStatus) {
+  return {
+    ...EMPTY_STATUS,
+    ...clusterStatus,
+    nodes: clusterStatus.nodes || [],
+    rooms: normalizeRooms(clusterStatus.rooms).map((incomingRoom) => {
+      const currentRoom = currentStatus.rooms.find(
+        (room) => room.roomCode === incomingRoom.roomCode,
+      )
+      return latestRoom(currentRoom, incomingRoom)
+    }),
+    events: clusterStatus.events || [],
+  }
+}
+
+function updateLeader(currentStatus, leader) {
+  return {
+    ...currentStatus,
+    leader,
+    events: [
+      {
+        type: 'leader-changed',
+        message: `Nodo ${leader?.nodeId ?? 'desconocido'} es el líder`,
+      },
+      ...currentStatus.events,
+    ].slice(0, 12),
+  }
+}
+
+function updateRoom(currentStatus, room) {
+  const currentRoom = currentStatus.rooms.find(
+    (candidate) => candidate.roomCode === room.roomCode,
+  )
+  const otherRooms = currentStatus.rooms.filter(
+    (candidate) => candidate.roomCode !== room.roomCode,
+  )
+
+  return {
+    ...currentStatus,
+    rooms: [...otherRooms, latestRoom(currentRoom, room)],
+  }
+}
+
 function Dashboard() {
   const [status, setStatus] = useState(EMPTY_STATUS)
   const [localClock, setLocalClock] = useState(getLamportClock())
 
   useEffect(() => {
     function handleClusterStatus(clusterStatus = {}) {
-      setStatus((currentStatus) => ({
-        ...EMPTY_STATUS,
-        ...clusterStatus,
-        nodes: clusterStatus.nodes || [],
-        rooms: normalizeRooms(clusterStatus.rooms).map((incomingRoom) => {
-          const currentRoom = currentStatus.rooms.find(
-            (room) => room.roomCode === incomingRoom.roomCode,
-          )
-          return latestRoom(currentRoom, incomingRoom)
-        }),
-        events: clusterStatus.events || [],
-      }))
+      setStatus((currentStatus) =>
+        updateClusterStatus(currentStatus, clusterStatus),
+      )
     }
 
     function handleLeaderChanged(leader) {
-      setStatus((currentStatus) => ({
-        ...currentStatus,
-        leader,
-        events: [
-          {
-            type: 'leader-changed',
-            message: `Nodo ${leader?.nodeId ?? 'desconocido'} es el líder`,
-          },
-          ...currentStatus.events,
-        ].slice(0, 12),
-      }))
+      setStatus((currentStatus) => updateLeader(currentStatus, leader))
     }
 
     function handleRoomUpdated(room) {
-      setStatus((currentStatus) => {
-        const currentRoom = currentStatus.rooms.find(
-          (candidate) => candidate.roomCode === room.roomCode,
-        )
-        const otherRooms = currentStatus.rooms.filter(
-          (candidate) => candidate.roomCode !== room.roomCode,
-        )
-
-        return {
-          ...currentStatus,
-          rooms: [...otherRooms, latestRoom(currentRoom, room)],
-        }
-      })
+      setStatus((currentStatus) => updateRoom(currentStatus, room))
     }
 
     const unsubscribeClock = subscribeLamportClock(setLocalClock)
@@ -167,8 +179,7 @@ function Dashboard() {
                   <small>{room.players?.length || 0} jugadores</small>
                 </div>
                 <span>
-                  v
-                  <b data-testid="room-version">
+                  {'v'}<b data-testid="room-version">
                     {room.stateVersion ?? 0}
                   </b>
                 </span>

@@ -4,7 +4,72 @@ import Dashboard from './Dashboard'
 import { emitCommand, socket } from './socket'
 import './App.css'
 
-function GameApp() {
+const NUMBER_COLORS = {
+  1: '#60a5fa',
+  2: '#4ade80',
+  3: '#f87171',
+  4: '#c084fc',
+  5: '#fb923c',
+  6: '#22d3ee',
+  7: '#f8fafc',
+  8: '#94a3b8',
+}
+
+function getNumberColor(value) {
+  return NUMBER_COLORS[value] || '#ffffff'
+}
+
+function getCellContent(cell, isMine) {
+  if (!cell.revealed || cell.value === 0) return ''
+  return isMine ? '💣' : cell.value
+}
+
+function getCellBackground(cell, isMine) {
+  if (!cell.revealed) return 'linear-gradient(145deg, #6d4ca1, #49316d)'
+  return isMine ? 'linear-gradient(145deg, #dc2626, #7f1d1d)' : '#241b35'
+}
+
+function getCellBorder(cell, revealingPlayer) {
+  if (!cell.revealed) return '1px solid #8b6dbc'
+  return `2px solid ${revealingPlayer?.color || '#67547e'}`
+}
+
+function getDisplayedGameMessage(room, isSpectator, finalMessage, gameMessage) {
+  if (room.status === 'finished') return finalMessage
+  if (isSpectator) return '👁 Estás observando la partida en tiempo real.'
+  return gameMessage
+}
+
+function LobbyAction({ connectedPlayers, isHost, loading, onStart, hostName }) {
+  if (connectedPlayers < 3) {
+    return (
+      <div className="waiting-message">
+        Esperando a los demás jugadores...
+      </div>
+    )
+  }
+
+  if (isHost) {
+    return (
+      <button
+        className="start-button"
+        type="button"
+        onClick={onStart}
+        disabled={loading}
+      >
+        {loading ? 'Iniciando...' : 'Iniciar partida'}
+      </button>
+    )
+  }
+
+  return (
+    <div className="waiting-message ready-message">
+      Esperando que {hostName || 'el creador'} inicie la partida...
+    </div>
+  )
+}
+
+function GameApp() { // NOSONAR -- coordinador de estado, eventos Socket.IO y tres vistas del juego.
   const publicClientUrl = (
     import.meta.env.VITE_PUBLIC_URL || window.location.origin
   ).replace(/\/$/, '')
@@ -283,21 +348,6 @@ function returnToMenu() {
     )
   }
 
-  function getNumberColor(value) {
-    const colors = {
-      1: '#60a5fa',
-      2: '#4ade80',
-      3: '#f87171',
-      4: '#c084fc',
-      5: '#fb923c',
-      6: '#22d3ee',
-      7: '#f8fafc',
-      8: '#94a3b8',
-    }
-
-    return colors[value] || '#ffffff'
-  }
-
   if (
     room?.status === 'playing' ||
     room?.status === 'finished'
@@ -404,13 +454,7 @@ function returnToMenu() {
                 const isMine =
                   cell.revealed && cell.value === 'mine'
 
-                const cellContent = cell.revealed
-                  ? isMine
-                    ? '💣'
-                    : cell.value === 0
-                      ? ''
-                      : cell.value
-                  : ''
+                const cellContent = getCellContent(cell, isMine)
 
                 const cellDisabled =
                   isSpectator ||
@@ -436,16 +480,8 @@ function returnToMenu() {
                       cursor: cellDisabled
                         ? 'default'
                         : 'pointer',
-                      background: cell.revealed
-                        ? isMine
-                          ? 'linear-gradient(145deg, #dc2626, #7f1d1d)'
-                          : '#241b35'
-                        : 'linear-gradient(145deg, #6d4ca1, #49316d)',
-                      border: cell.revealed
-                        ? `2px solid ${
-                            revealingPlayer?.color || '#67547e'
-                          }`
-                        : '1px solid #8b6dbc',
+                      background: getCellBackground(cell, isMine),
+                      border: getCellBorder(cell, revealingPlayer),
                       borderRadius: '5px',
                       color: isMine
                         ? '#ffffff'
@@ -463,12 +499,13 @@ function returnToMenu() {
           </section>
 
           <p className="game-message">
-  {room.status === 'finished'
-    ? finalMessage
-    : isSpectator
-      ? '👁 Estás observando la partida en tiempo real.'
-      : gameMessage}
-</p>
+            {getDisplayedGameMessage(
+              room,
+              isSpectator,
+              finalMessage,
+              gameMessage,
+            )}
+          </p>
 
 {isSpectator && room.status === 'playing' && (
   <div className="game-actions">
@@ -610,28 +647,13 @@ function returnToMenu() {
             ))}
           </div>
 
-          {connectedPlayers < 3 ? (
-            <div className="waiting-message">
-              Esperando a los demás jugadores...
-            </div>
-          ) : isHost ? (
-            <button
-              className="start-button"
-              type="button"
-              onClick={startGame}
-              disabled={loading}
-            >
-              {loading
-                ? 'Iniciando...'
-                : 'Iniciar partida'}
-            </button>
-          ) : (
-            <div className="waiting-message ready-message">
-              Esperando que{' '}
-              {hostPlayer?.name || 'el creador'} inicie la
-              partida...
-            </div>
-          )}
+          <LobbyAction
+            connectedPlayers={connectedPlayers}
+            isHost={isHost}
+            loading={loading}
+            onStart={startGame}
+            hostName={hostPlayer?.name}
+          />
           {isSpectator && (
             <button
               className="menu-button spectator-leave-button"
